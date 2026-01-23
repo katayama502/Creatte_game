@@ -11,18 +11,19 @@ import {
   Bomb,
   Target,
   Check,
-  Palette,
   Upload,
-  Image as ImageIcon
+  User,
+  Edit2
 } from 'lucide-react';
 
 // --- 定数・設定 ---
 const GRID_SIZE = 7;
 const INITIAL_HAND_SIZE = 6;
 
-// --- クリエットくんのカスタム表示コンポーネント ---
-const CreatteBot = ({ variant, colorClass, size = 48, customImage }) => {
-  // カスタム画像がある場合は画像を表示
+// --- カスタム駒表示コンポーネント ---
+const CustomPawn = ({ size = 48, customImage, colorClass }) => {
+  const borderColor = colorClass.includes('text-blue') ? '#3b82f6' : colorClass.includes('text-red') ? '#ef4444' : '#64748b';
+  
   if (customImage) {
     return (
       <div 
@@ -32,48 +33,22 @@ const CreatteBot = ({ variant, colorClass, size = 48, customImage }) => {
           backgroundImage: `url(${customImage})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          borderRadius: variant === 'hero' ? '12px' : '50%',
-          border: `3px solid ${colorClass.includes('text-blue') ? '#3b82f6' : colorClass.includes('text-red') ? '#ef4444' : '#10b981'}`
+          borderRadius: '12px',
+          border: `3px solid ${borderColor}`
         }}
-        className="shadow-sm"
+        className="shadow-md"
       />
     );
   }
 
-  // それ以外はSVGを表示
-  const fill = colorClass.includes('text-blue') ? '#3b82f6' : 
-               colorClass.includes('text-red') ? '#ef4444' : 
-               colorClass.includes('text-green') ? '#10b981' : '#f59e0b';
-
+  // 画像がない場合のデフォルトアイコン
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Body */}
-      <rect x="20" y="30" width="60" height="50" rx="15" fill={fill} fillOpacity="0.2" stroke={fill} strokeWidth="4" />
-      <circle cx="50" cy="30" r="15" fill={fill} fillOpacity="0.1" stroke={fill} strokeWidth="4" />
-      
-      {/* Eyes */}
-      <circle cx="40" cy="30" r="3" fill={fill} />
-      <circle cx="60" cy="30" r="3" fill={fill} />
-      
-      {/* Variant Decorations */}
-      {variant === 'glasses' && (
-        <g stroke={fill} strokeWidth="2">
-          <circle cx="40" cy="30" r="6" />
-          <circle cx="60" cy="30" r="6" />
-          <line x1="46" y1="30" x2="54" y2="30" />
-        </g>
-      )}
-      {variant === 'crown' && (
-        <path d="M35 15L40 22L50 15L60 22L65 15V25H35V15Z" fill="#facc15" stroke="#ca8a04" strokeWidth="2" />
-      )}
-      {variant === 'hero' && (
-        <path d="M20 40L10 60L20 55V40Z" fill="#ef4444" />
-      )}
-      
-      {/* Antennas */}
-      <line x1="50" y1="15" x2="50" y2="8" stroke={fill} strokeWidth="4" strokeLinecap="round" />
-      <circle cx="50" cy="5" r="3" fill={fill} />
-    </svg>
+    <div 
+      style={{ width: size, height: size, border: `3px solid ${borderColor}` }}
+      className="bg-slate-200 rounded-xl flex items-center justify-center text-slate-400"
+    >
+      <User size={size * 0.6} />
+    </div>
   );
 };
 
@@ -89,20 +64,13 @@ const CARD_TYPES = {
 
 const DIRECTIONS = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
 
-const AVATARS = [
-  { id: 'creatte_std', name: 'クリエット', variant: 'standard', color: 'text-blue-500', bgColor: 'bg-blue-50' },
-  { id: 'creatte_smart', name: 'メガネ', variant: 'glasses', color: 'text-green-500', bgColor: 'bg-green-50' },
-  { id: 'creatte_king', name: 'キング', variant: 'crown', color: 'text-yellow-500', bgColor: 'bg-yellow-50' },
-  { id: 'creatte_hero', name: 'ヒーロー', variant: 'hero', color: 'text-red-500', bgColor: 'bg-red-50' },
-];
-
 const App = () => {
   const [gameState, setGameState] = useState('START');
   const [turn, setTurn] = useState(1);
   const [round, setRound] = useState(1);
   const [players, setPlayers] = useState([
-    { id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, avatar: AVATARS[0], customImage: null },
-    { id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, avatar: AVATARS[1], customImage: null }
+    { id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, name: "プレイヤー1", customImage: null, colorClass: "text-blue-500", bgColor: "bg-blue-50" },
+    { id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, name: "プレイヤー2", customImage: null, colorClass: "text-red-500", bgColor: "bg-red-50" }
   ]);
   const [hands, setHands] = useState({ 1: [], 2: [] });
   const [programs, setPrograms] = useState({ 1: Array(5).fill(null), 2: Array(5).fill(null) });
@@ -110,7 +78,9 @@ const App = () => {
   const [winner, setWinner] = useState(null);
   const [message, setMessage] = useState("");
   const [visualEffect, setVisualEffect] = useState(null);
-  const [selectedAvatars, setSelectedAvatars] = useState({ 1: AVATARS[0], 2: AVATARS[1] });
+  
+  // 編集用の名前と画像
+  const [tempNames, setTempNames] = useState({ 1: "プレイヤー1", 2: "プレイヤー2" });
   const [customImages, setCustomImages] = useState({ 1: null, 2: null });
 
   const fileInputRef1 = useRef(null);
@@ -123,7 +93,7 @@ const App = () => {
     setWinner(null);
     setMessage("");
     setVisualEffect(null);
-    setSelectedAvatars({ 1: AVATARS[0], 2: AVATARS[1] });
+    setTempNames({ 1: "プレイヤー1", 2: "プレイヤー2" });
     setCustomImages({ 1: null, 2: null });
   };
 
@@ -140,14 +110,14 @@ const App = () => {
 
   const startGame = () => {
     setPlayers([
-      { id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, avatar: selectedAvatars[1], customImage: customImages[1] },
-      { id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, avatar: selectedAvatars[2], customImage: customImages[2] }
+      { ...players[0], name: tempNames[1] || "プレイヤー1", customImage: customImages[1] },
+      { ...players[1], name: tempNames[2] || "プレイヤー2", customImage: customImages[2] }
     ]);
     resetHandsAndPrograms();
     setGameState('PLANNING');
     setTurn(1);
     setRound(1);
-    setMessage("プレイヤー1のターン：プログラムを組もう！");
+    setMessage(`${tempNames[1] || "プレイヤー1"}のターン！`);
   };
 
   const resetHandsAndPrograms = () => {
@@ -187,7 +157,7 @@ const App = () => {
   const submitProgram = () => {
     if (turn === 1) {
       setTurn(2);
-      setMessage("プレイヤー2のターン：プログラムを組もう！");
+      setMessage(`${players[1].name}のターン！`);
     } else {
       setGameState('EXECUTION');
       runExecution();
@@ -214,8 +184,7 @@ const App = () => {
       await new Promise(r => setTimeout(r, 800));
 
       let nextStepPlayers = JSON.parse(JSON.stringify(currentPlayers));
-      nextStepPlayers[0].avatar = currentPlayers[0].avatar;
-      nextStepPlayers[1].avatar = currentPlayers[1].avatar;
+      // 画像データはJSON.stringifyで壊れる可能性があるため再セット
       nextStepPlayers[0].customImage = currentPlayers[0].customImage;
       nextStepPlayers[1].customImage = currentPlayers[1].customImage;
 
@@ -242,7 +211,7 @@ const App = () => {
         } else if (card.id === 'TURN_R') {
           p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 1) % 4];
         } else if (card.id === 'LASER') {
-          setVisualEffect({ type: 'laser', x: p.x, y: p.y, dir: p.dir, color: p.avatar.color.replace('text-', 'bg-') });
+          setVisualEffect({ type: 'laser', x: p.x, y: p.y, dir: p.dir, color: p.colorClass.replace('text-', 'bg-') });
           setTimeout(() => setVisualEffect(null), 400);
           let hit = false;
           if (p.dir === 'UP' && opp.x === p.x && opp.y < p.y) hit = true;
@@ -254,7 +223,7 @@ const App = () => {
             opp.x = nx; opp.y = ny; opp.stun = true;
           }
         } else if (card.id === 'HACK') {
-          setVisualEffect({ type: 'hack', x: p.x, y: p.y, color: p.avatar.color.replace('text-', 'bg-') });
+          setVisualEffect({ type: 'hack', x: p.x, y: p.y, color: p.colorClass.replace('text-', 'bg-') });
           setTimeout(() => setVisualEffect(null), 400);
           if (Math.abs(p.x - opp.x) + Math.abs(p.y - opp.y) <= 1) {
             opp.dir = DIRECTIONS[(DIRECTIONS.indexOf(opp.dir) + 2) % 4];
@@ -288,7 +257,7 @@ const App = () => {
     else {
       setRound(r => r + 1); setTurn(1); setGameState('PLANNING');
       resetHandsAndPrograms();
-      setMessage(`ラウンド ${round + 1}：プレイヤー1のターン`);
+      setMessage(`${players[0].name}のターン！`);
     }
   };
 
@@ -298,74 +267,85 @@ const App = () => {
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 font-sans text-slate-800">
         <div className="text-center mb-8">
           <h1 className="text-6xl font-black text-blue-600 tracking-tighter mb-2">LOGIC DUEL</h1>
-          <p className="text-slate-500 font-bold uppercase tracking-widest">Creatte Edition</p>
+          <p className="text-slate-500 font-bold uppercase tracking-widest italic">Create Your Hero</p>
         </div>
-        <div className="bg-white p-8 rounded-[3rem] shadow-2xl border-4 border-blue-100 max-w-5xl w-full">
-          <h2 className="text-2xl font-bold text-center mb-8 flex items-center justify-center gap-2">
-            <Palette className="text-blue-500" /> クリエットくんを選んでね！
+        <div className="bg-white p-10 rounded-[3rem] shadow-2xl border-4 border-blue-100 max-w-4xl w-full">
+          <h2 className="text-2xl font-bold text-center mb-10 flex items-center justify-center gap-2">
+             ヒーローをカスタマイズしよう！
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
-            {/* P1 Select */}
-            <div className="bg-blue-50 p-6 rounded-3xl border-2 border-blue-200">
-              <p className="text-blue-600 font-bold text-center mb-4">プレイヤー1</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-10 mb-10">
+            {/* Player 1 Setup */}
+            <div className="bg-blue-50 p-8 rounded-[2rem] border-2 border-blue-200 shadow-inner">
+              <div className="flex items-center gap-2 mb-6 text-blue-600">
+                <Edit2 size={20} />
+                <span className="font-black uppercase tracking-widest">Player 1</span>
+              </div>
               
-              <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-2 gap-4">
-                  {AVATARS.map(av => (
-                    <button key={av.id} onClick={() => setSelectedAvatars(p => ({...p, 1: av}))} className={`p-4 rounded-2xl border-4 flex flex-col items-center transition-all bg-white ${selectedAvatars[1].id === av.id && !customImages[1] ? 'border-blue-500 scale-105 shadow-md' : 'border-transparent opacity-60'}`} disabled={selectedAvatars[2].id === av.id}>
-                      <CreatteBot variant={av.variant} colorClass={av.color} size={48} />
-                      <span className="text-[10px] font-bold mt-2 text-slate-600">{av.name}</span>
-                    </button>
-                  ))}
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Pawn Name</label>
+                  <input 
+                    type="text" 
+                    value={tempNames[1]} 
+                    onChange={(e) => setTempNames({...tempNames, 1: e.target.value})}
+                    placeholder="名前を入力"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-blue-100 focus:border-blue-400 outline-none font-bold"
+                  />
                 </div>
-                
-                <div className="flex flex-col items-center p-3 bg-white/50 rounded-2xl border-2 border-dashed border-blue-200">
-                  <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase">Or Upload Image</p>
+
+                <div className="flex flex-col items-center p-6 bg-white rounded-2xl border-2 border-dashed border-blue-200">
+                  <CustomPawn size={80} customImage={customImages[1]} colorClass="text-blue-500" />
                   <input type="file" ref={fileInputRef1} className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 1)} />
-                  <button onClick={() => fileInputRef1.current.click()} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${customImages[1] ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>
-                    {customImages[1] ? <Check size={14}/> : <Upload size={14}/>} {customImages[1] ? '変更する' : '画像をアップ'}
+                  <button 
+                    onClick={() => fileInputRef1.current.click()} 
+                    className="mt-4 flex items-center gap-2 px-6 py-2 bg-blue-500 text-white rounded-xl font-bold hover:bg-blue-600 transition-all shadow-md"
+                  >
+                    <Upload size={16}/> {customImages[1] ? '画像をかえる' : '画像をアップ'}
                   </button>
-                  {customImages[1] && (
-                    <div className="mt-2 flex items-center gap-2">
-                      <CreatteBot colorClass="text-blue-500" size={32} customImage={customImages[1]} />
-                      <span className="text-[10px] font-bold text-blue-600 italic">カスタム駒を使用中</span>
-                    </div>
-                  )}
+                  <p className="mt-2 text-[10px] text-slate-400">推奨: 正方形の画像</p>
                 </div>
               </div>
             </div>
 
-            {/* P2 Select */}
-            <div className="bg-red-50 p-6 rounded-3xl border-2 border-red-200">
-              <p className="text-red-600 font-bold text-center mb-4">プレイヤー2</p>
+            {/* Player 2 Setup */}
+            <div className="bg-red-50 p-8 rounded-[2rem] border-2 border-red-200 shadow-inner">
+              <div className="flex items-center gap-2 mb-6 text-red-600">
+                <Edit2 size={20} />
+                <span className="font-black uppercase tracking-widest">Player 2</span>
+              </div>
               
-              <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-2 gap-4">
-                  {AVATARS.map(av => (
-                    <button key={av.id} onClick={() => setSelectedAvatars(p => ({...p, 2: av}))} className={`p-4 rounded-2xl border-4 flex flex-col items-center transition-all bg-white ${selectedAvatars[2].id === av.id && !customImages[2] ? 'border-red-500 scale-105 shadow-md' : 'border-transparent opacity-60'}`} disabled={selectedAvatars[1].id === av.id}>
-                      <CreatteBot variant={av.variant} colorClass={av.color} size={48} />
-                      <span className="text-[10px] font-bold mt-2 text-slate-600">{av.name}</span>
-                    </button>
-                  ))}
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">Pawn Name</label>
+                  <input 
+                    type="text" 
+                    value={tempNames[2]} 
+                    onChange={(e) => setTempNames({...tempNames, 2: e.target.value})}
+                    placeholder="名前を入力"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-red-100 focus:border-red-400 outline-none font-bold"
+                  />
                 </div>
 
-                <div className="flex flex-col items-center p-3 bg-white/50 rounded-2xl border-2 border-dashed border-red-200">
-                  <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase">Or Upload Image</p>
+                <div className="flex flex-col items-center p-6 bg-white rounded-2xl border-2 border-dashed border-red-200">
+                  <CustomPawn size={80} customImage={customImages[2]} colorClass="text-red-500" />
                   <input type="file" ref={fileInputRef2} className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 2)} />
-                  <button onClick={() => fileInputRef2.current.click()} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${customImages[2] ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>
-                    {customImages[2] ? <Check size={14}/> : <Upload size={14}/>} {customImages[2] ? '変更する' : '画像をアップ'}
+                  <button 
+                    onClick={() => fileInputRef2.current.click()} 
+                    className="mt-4 flex items-center gap-2 px-6 py-2 bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 transition-all shadow-md"
+                  >
+                    <Upload size={16}/> {customImages[2] ? '画像をかえる' : '画像をアップ'}
                   </button>
-                  {customImages[2] && (
-                    <div className="mt-2 flex items-center gap-2">
-                      <CreatteBot colorClass="text-red-500" size={32} customImage={customImages[2]} />
-                      <span className="text-[10px] font-bold text-red-600 italic">カスタム駒を使用中</span>
-                    </div>
-                  )}
+                  <p className="mt-2 text-[10px] text-slate-400">推奨: 正方形の画像</p>
                 </div>
               </div>
             </div>
           </div>
-          <button onClick={startGame} className="w-full py-5 bg-blue-600 text-white font-black text-2xl rounded-full shadow-xl shadow-blue-500/30 hover:bg-blue-700 active:scale-95 transition-all">バトルスタート！</button>
+          <button 
+            onClick={startGame} 
+            className="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black text-2xl rounded-full shadow-xl shadow-blue-500/30 hover:scale-[1.02] active:scale-95 transition-all"
+          >
+            準備完了！バトルスタート
+          </button>
         </div>
       </div>
     );
@@ -377,12 +357,12 @@ const App = () => {
         <h1 className="text-3xl font-black text-blue-600 tracking-tighter">LOGIC DUEL</h1>
         <div className="flex gap-4">
           <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 1 ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
-            <p className="text-[10px] font-bold text-blue-500">PLAYER 1</p>
-            <p className="font-bold text-sm">Goal: (6, 6)</p>
+            <p className="text-[10px] font-bold text-blue-500 uppercase">Player 1</p>
+            <p className="font-black text-sm">{players[0].name}</p>
           </div>
           <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 2 ? 'border-red-500 bg-red-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
-            <p className="text-[10px] font-bold text-red-500">PLAYER 2</p>
-            <p className="font-bold text-sm">Goal: (0, 0)</p>
+            <p className="text-[10px] font-bold text-red-500 uppercase">Player 2</p>
+            <p className="font-black text-sm">{players[1].name}</p>
           </div>
         </div>
       </header>
@@ -396,14 +376,14 @@ const App = () => {
             </h3>
             <div className="space-y-2">
               {programs[turn].map((slot, i) => (
-                <div key={i} onClick={() => removeFromProgram(i)} className={`h-14 rounded-2xl border-2 flex items-center px-4 cursor-pointer transition-all ${slot ? `${slot.color} border-transparent text-white` : 'border-slate-100 bg-slate-50 text-slate-300'} ${executionStep === i ? 'ring-4 ring-yellow-400 scale-105' : ''}`}>
+                <div key={i} onClick={() => removeFromProgram(i)} className={`h-14 rounded-2xl border-2 flex items-center px-4 cursor-pointer transition-all ${slot ? `${slot.color} border-transparent text-white` : 'border-slate-100 bg-slate-50 text-slate-300'} ${executionStep === i ? 'ring-4 ring-yellow-400 scale-105 shadow-lg' : ''}`}>
                   <span className="w-6 font-mono text-xs opacity-50">{i + 1}</span>
                   {slot ? <div className="flex items-center gap-2 font-bold text-sm"><slot.icon size={18} /> {slot.label}</div> : <span className="text-[10px] font-bold uppercase">Empty</span>}
                 </div>
               ))}
             </div>
-            <button onClick={submitProgram} disabled={programs[turn].every(s => s === null)} className={`w-full mt-6 py-4 rounded-2xl font-black text-white shadow-lg transition-all ${turn === 1 ? 'bg-blue-600' : 'bg-red-600'} disabled:bg-slate-200 disabled:shadow-none`}>
-              {turn === 1 ? '次へ' : '実行！'}
+            <button onClick={submitProgram} disabled={programs[turn].every(s => s === null)} className={`w-full mt-6 py-4 rounded-2xl font-black text-white shadow-lg transition-all ${turn === 1 ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'} disabled:bg-slate-200 disabled:shadow-none`}>
+              {turn === 1 ? '次のプレイヤーへ' : 'じっこう！'}
             </button>
           </div>
           {/* 手札 */}
@@ -422,7 +402,9 @@ const App = () => {
 
         {/* ボード */}
         <div className="lg:col-span-6 flex flex-col items-center">
-          <div className="mb-6 bg-white px-6 py-2 rounded-full border-4 border-blue-100 font-bold shadow-sm">{message}</div>
+          <div className="mb-6 bg-white px-8 py-3 rounded-full border-4 border-slate-100 font-black shadow-sm text-lg text-slate-700">
+             {message}
+          </div>
           <div className="bg-white p-3 rounded-[3rem] shadow-2xl border-[6px] border-slate-100">
             <div className="grid gap-1.5 bg-slate-100 p-1.5 rounded-[2.5rem]" style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, minmax(0, 1fr))`, width: 'min(90vw, 500px)', height: 'min(90vw, 500px)' }}>
               {Array.from({ length: GRID_SIZE * GRID_SIZE }).map((_, i) => {
@@ -433,12 +415,15 @@ const App = () => {
                       (visualEffect.dir === 'UP' && x === visualEffect.x && y < visualEffect.y) || (visualEffect.dir === 'DOWN' && x === visualEffect.x && y > visualEffect.y) || (visualEffect.dir === 'LEFT' && y === visualEffect.y && x < visualEffect.x) || (visualEffect.dir === 'RIGHT' && y === visualEffect.y && x > visualEffect.x)
                     ) && <div className={`absolute inset-0 ${visualEffect.color} opacity-60 animate-pulse`}></div>}
                     {visualEffect && visualEffect.type === 'hack' && Math.abs(x - visualEffect.x) <= 1 && Math.abs(y - visualEffect.y) <= 1 && <div className={`absolute inset-0 ${visualEffect.color} opacity-40 animate-ping`}></div>}
+                    
                     {players.map(p => p.x === x && p.y === y && (
                       <div key={p.id} className={`transition-all duration-500 ${p.dir === 'UP' ? 'rotate-0' : p.dir === 'RIGHT' ? 'rotate-90' : p.dir === 'DOWN' ? 'rotate-180' : '-rotate-90'}`}>
-                        <div className={`p-1 rounded-2xl ${p.avatar.bgColor} relative`}>
-                          {p.stun && <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-0.5 animate-bounce z-20"><Zap size={10} /></div>}
-                          <CreatteBot variant={p.avatar.variant} colorClass={p.avatar.color} size={40} customImage={p.customImage} />
-                          <ArrowUp className={`absolute -top-1 left-1/2 -translate-x-1/2 text-[10px] ${p.avatar.color}`} size={12} strokeWidth={4} />
+                        <div className={`p-1 rounded-2xl ${p.bgColor} relative`}>
+                          {p.stun && <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-1 animate-bounce z-20 shadow-sm"><Zap size={12} fill="currentColor" /></div>}
+                          <CustomPawn size={40} customImage={p.customImage} colorClass={p.colorClass} />
+                          <div className={`absolute -top-2 left-1/2 -translate-x-1/2 ${p.colorClass}`}>
+                            <ArrowUp size={14} strokeWidth={4} />
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -449,33 +434,42 @@ const App = () => {
           </div>
         </div>
 
-        {/* ルール・リセット */}
+        {/* ステータス */}
         <div className="lg:col-span-3 space-y-4">
           <div className="p-6 rounded-[2rem] border-4 border-slate-100 bg-white shadow-md">
-            <h3 className="text-sm font-black mb-4 uppercase text-slate-400 flex items-center gap-2"><Trophy size={16} /> Goals</h3>
-            <div className="space-y-3">
+            <h3 className="text-sm font-black mb-4 uppercase text-slate-400 flex items-center gap-2"><Trophy size={16} /> Mission</h3>
+            <div className="space-y-4">
               {players.map(p => (
                 <div key={p.id} className={`flex items-center gap-3 p-3 rounded-2xl border-2 ${p.id === 1 ? 'border-blue-50 bg-blue-50/50' : 'border-red-50 bg-red-50/50'}`}>
-                  <CreatteBot variant={p.avatar.variant} colorClass={p.avatar.color} size={32} customImage={p.customImage} />
-                  <div>
-                    <p className="text-xs font-black">{p.avatar.name}</p>
-                    <p className="text-[10px] opacity-60">Goal: {p.id === 1 ? '(6, 6)' : '(0, 0)'}</p>
+                  <CustomPawn size={36} customImage={p.customImage} colorClass={p.colorClass} />
+                  <div className="overflow-hidden">
+                    <p className="text-xs font-black truncate">{p.name}</p>
+                    <p className="text-[10px] opacity-60 font-bold uppercase">Target: {p.id === 1 ? '(6, 6)' : '(0, 0)'}</p>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-          <button onClick={() => confirm("リセットしますか？") && initGame()} className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl text-xs font-black transition-all border-2 border-slate-200 uppercase tracking-widest">Restart Game</button>
+          <button onClick={() => confirm("設定をリセットして最初に戻りますか？") && initGame()} className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl text-[10px] font-black transition-all border-2 border-slate-200 uppercase tracking-[0.2em]">Reset Hero Setup</button>
         </div>
       </main>
 
       {/* 結果画面 */}
       {gameState === 'RESULT' && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white border-[12px] border-blue-100 p-12 rounded-[4rem] max-w-sm w-full text-center shadow-2xl">
+          <div className="bg-white border-[12px] border-blue-100 p-12 rounded-[4rem] max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
             <Trophy size={80} className="mx-auto text-yellow-500 mb-6 animate-bounce" />
-            <h2 className="text-4xl font-black mb-2">{winner === 'DRAW' ? 'ひきわけ！' : `PLAYER ${winner} WIN!`}</h2>
-            <p className="text-slate-400 font-bold mb-8 italic">ナイス・ロジック！</p>
+            <h2 className="text-4xl font-black mb-2 leading-tight">
+              {winner === 'DRAW' ? 'ひきわけ！' : `${players[winner-1].name} のしょうり！`}
+            </h2>
+            <p className="text-slate-400 font-bold mb-8 italic">Congratulations!</p>
+            
+            {winner !== 'DRAW' && (
+              <div className="flex justify-center mb-8">
+                <CustomPawn size={100} customImage={players[winner-1].customImage} colorClass={players[winner-1].colorClass} />
+              </div>
+            )}
+
             <button onClick={initGame} className="w-full py-5 bg-blue-600 text-white rounded-full font-black text-xl shadow-xl shadow-blue-500/30 hover:bg-blue-700 transition-all">もういちど あそぶ</button>
           </div>
         </div>
