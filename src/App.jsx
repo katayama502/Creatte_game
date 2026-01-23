@@ -91,7 +91,7 @@ async function resizeImage(base64Str, maxWidth = 300, maxHeight = 300) {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.5)); // 品質をさらに下げてサイズを圧縮
+      resolve(canvas.toDataURL('image/jpeg', 0.5)); 
     };
     img.onerror = () => resolve(base64Str);
   });
@@ -193,7 +193,7 @@ const App = () => {
         runExecutionLocal(data.players, data.programs);
       }
     }, (err) => {
-      setMessage("通信エラーが発生しました。");
+      setMessage("通信エラーが発生しました。設定を確認してください。");
       console.error("Firestore sync error:", err);
     });
     return () => unsubscribe();
@@ -258,28 +258,45 @@ const App = () => {
     
     try {
       const snap = await getDoc(roomRef);
-      if (!snap.exists() || snap.data().status === 'waiting' || snap.data().gameState === 'RESULT') {
+      // 修正ポイント: ホスト(P1)になる条件をより厳密に
+      const data = snap.exists() ? snap.data() : null;
+      
+      if (!data || data.status === 'playing' || data.gameState === 'RESULT') {
         // P1として部屋を作成またはリセット
         const initialData = {
-          roomId: rid, status: 'waiting', gameState: 'LOBBY', round: 1, winner: null,
-          players: [{ id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, name: tempNames[1], customImage: customImages[1], uid: user.uid, colorClass: "text-blue-500", bgColor: "bg-blue-50" }],
+          roomId: rid, 
+          status: 'waiting', 
+          gameState: 'LOBBY', 
+          round: 1, 
+          winner: null,
+          players: [{ 
+            id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, 
+            name: tempNames[1], customImage: customImages[1], 
+            uid: user.uid, colorClass: "text-blue-500", bgColor: "bg-blue-50" 
+          }],
           programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) },
           message: "対戦相手を待っています..."
         };
         await setDoc(roomRef, initialData);
         setOnlineRole(1); setTurn(1);
-      } else {
-        const data = snap.data();
+      } else if (data.status === 'waiting') {
+        // 修正ポイント: 自分がすでにP1なら参加処理をスキップ
         if (data.players?.[0]?.uid === user.uid) { 
-          // 自分がP1として復帰
-          setOnlineRole(1); setTurn(1); setRoomId(rid); setGameState(data.gameState);
+          setOnlineRole(1); setTurn(1); setRoomId(rid); setGameState('LOBBY');
           return; 
         }
+        
         // P2として参加
         const updatedPlayers = [
           data.players[0], 
-          { id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, name: tempNames[1], customImage: customImages[1], uid: user.uid, colorClass: "text-red-500", bgColor: "bg-red-50" }
+          { 
+            id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, 
+            name: tempNames[1], customImage: customImages[1], 
+            uid: user.uid, colorClass: "text-red-500", bgColor: "bg-red-50" 
+          }
         ];
+        
+        // 参加と同時に PLANNING へ移行
         await updateDoc(roomRef, {
           players: updatedPlayers, 
           status: 'playing', 
