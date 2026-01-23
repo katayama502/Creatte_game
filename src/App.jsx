@@ -99,7 +99,7 @@ async function resizeImage(base64Str, maxWidth = 300, maxHeight = 300) {
 
 // --- カスタム駒コンポーネント ---
 const CustomPawn = ({ size = 48, customImage, colorClass, isMissing }) => {
-  const borderColor = colorClass.includes('text-blue') ? '#3b82f6' : colorClass.includes('text-red') ? '#ef4444' : '#64748b';
+  const borderColor = colorClass?.includes('text-blue') ? '#3b82f6' : colorClass?.includes('text-red') ? '#ef4444' : '#64748b';
   if (customImage) {
     return (
       <div 
@@ -142,63 +142,8 @@ const App = () => {
   const fileInputRef1 = useRef(null);
   const fileInputRef2 = useRef(null);
 
-  // --- Auth Initialize ---
-  useEffect(() => {
-    async function initAuth() {
-      try {
-        let signedIn = false;
-        // 環境トークンがある場合は試すが、不一致(mismatch)が発生した場合は匿名認証へフォールバック
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          try {
-            await signInWithCustomToken(auth, __initial_auth_token);
-            signedIn = true;
-          } catch (e) {
-            // Token mismatch error, ignore and move to anonymous
-          }
-        }
-        
-        if (!signedIn) {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth failed:", err);
-      } finally {
-        setIsAuthLoading(false);
-      }
-    }
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
-
-  // --- Online Sync Effect ---
-  useEffect(() => {
-    if (!user || mode !== 'ONLINE' || !roomId) return;
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
-    const unsubscribe = onSnapshot(roomRef, (snapshot) => {
-      if (!snapshot.exists()) return;
-      const data = snapshot.data();
-      
-      setPlayers(data.players);
-      setGameState(data.gameState);
-      setRound(data.round);
-      setWinner(data.winner);
-      setHands(data.hands || { 1: [], 2: [] });
-      setPrograms(data.programs || { 1: Array(5).fill(null), 2: Array(5).fill(null) });
-      setMessage(data.message);
-
-      if (data.gameState === 'EXECUTION' && executionStep === -1) {
-        runExecutionLocal(data.players, data.programs);
-      }
-    }, (err) => {
-      setMessage("通信エラーが発生しました。設定を確認してください。");
-      console.error("Firestore sync error:", err);
-    });
-    return () => unsubscribe();
-  }, [user, mode, roomId]);
-
-  // --- Game Internal Logic ---
-  const initGame = () => {
+  // --- Functions (Defined using function keyword for hoisting to avoid ReferenceError) ---
+  function initGame() {
     setGameState('START');
     setMode(null);
     setRoomId(null);
@@ -210,9 +155,9 @@ const App = () => {
     setVisualEffect(null);
     setExecutionStep(-1);
     setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) });
-  };
+  }
 
-  const handleImageUpload = async (e, playerNum) => {
+  async function handleImageUpload(e, playerNum) {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
@@ -222,17 +167,17 @@ const App = () => {
       };
       reader.readAsDataURL(file);
     }
-  };
+  }
 
-  const generateHands = () => {
+  function generateHands() {
     const pick = () => Array.from({ length: INITIAL_HAND_SIZE }, () => {
       const keys = Object.keys(CARD_TYPES);
       return CARD_TYPES[keys[Math.floor(Math.random() * keys.length)]];
     });
     return { 1: pick(), 2: pick() };
-  };
+  }
 
-  const startLocalGame = () => {
+  function startLocalGame() {
     if (!customImages[1] || !customImages[2]) return;
     const updatedPlayers = [
       { ...players[0], name: tempNames[1], customImage: customImages[1] },
@@ -243,9 +188,9 @@ const App = () => {
     setGameState('PLANNING');
     setTurn(1); setRound(1); setMode('LOCAL');
     setMessage(`${updatedPlayers[0].name}のターン！`);
-  };
+  }
 
-  const startOnlineLobby = async () => {
+  async function startOnlineLobby() {
     if (!user || !customImages[1]) return;
     setGameState('LOBBY');
     setMessage("対戦相手を探しています...");
@@ -283,9 +228,9 @@ const App = () => {
       setMessage("エラー: 設定を確認してください");
       console.error("Firestore join error:", err);
     }
-  };
+  }
 
-  const addToProgram = (card, index) => {
+  function addToProgram(card, index) {
     if (gameState !== 'PLANNING') return;
     if (mode === 'ONLINE') {
       const currentWaitingId = message.includes("P1") ? 1 : 2;
@@ -300,9 +245,9 @@ const App = () => {
       newHands[turn] = newHands[turn].filter((_, i) => i !== index);
       setHands(newHands);
     }
-  };
+  }
 
-  const removeFromProgram = (slotIndex) => {
+  function removeFromProgram(slotIndex) {
     if (gameState !== 'PLANNING') return;
     const card = programs[turn][slotIndex];
     if (!card) return;
@@ -312,21 +257,21 @@ const App = () => {
     const newHands = { ...hands };
     newHands[turn].push(card);
     setHands(newHands);
-  };
+  }
 
-  const getNextPos = (x, y, dir, steps = 1) => {
+  function getNextPos(x, y, dir, steps = 1) {
     let nx = x, ny = y;
     if (dir === 'UP') ny -= steps; if (dir === 'DOWN') ny += steps; if (dir === 'LEFT') nx -= steps; if (dir === 'RIGHT') nx += steps;
     return { nx: Math.max(0, Math.min(GRID_SIZE - 1, nx)), ny: Math.max(0, Math.min(GRID_SIZE - 1, ny)) };
-  };
+  }
 
   async function handleRoundEnd(finalPlayers) {
-    const p1W = finalPlayers[0].x === 6 && finalPlayers[0].y === 6;
-    const p2W = finalPlayers[1].x === 0 && finalPlayers[1].y === 0;
+    const p1W = finalPlayers[0]?.x === 6 && finalPlayers[0]?.y === 6;
+    const p2W = finalPlayers[1]?.x === 0 && finalPlayers[1]?.y === 0;
     let localWinner = p1W && p2W ? 'DRAW' : p1W ? 1 : p2W ? 2 : null;
     if (mode === 'LOCAL') {
       if (localWinner) { setWinner(localWinner); setGameState('RESULT'); }
-      else { setRound(r => r + 1); setTurn(1); setGameState('PLANNING'); setHands(generateHands()); setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) }); setMessage(`${players[0].name}のターン！`); }
+      else { setRound(r => r + 1); setTurn(1); setGameState('PLANNING'); setHands(generateHands()); setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) }); setMessage(`${players[0]?.name || "Player 1"}のターン！`); }
     } else if (onlineRole === 1) {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
       try {
@@ -353,12 +298,12 @@ const App = () => {
         } else if (card.id === 'TURN_L') { p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 3) % 4]; }
         else if (card.id === 'TURN_R') { p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 1) % 4]; }
         else if (card.id === 'LASER') {
-          setVisualEffect({ type: 'laser', x: p.x, y: p.y, dir: p.dir, color: p.colorClass.replace('text-', 'bg-') });
+          setVisualEffect({ type: 'laser', x: p.x, y: p.y, dir: p.dir, color: p.colorClass?.replace('text-', 'bg-') || 'bg-red-500' });
           setTimeout(() => setVisualEffect(null), 400);
           let hit = (p.dir === 'UP' && opp.x === p.x && opp.y < p.y) || (p.dir === 'DOWN' && opp.x === p.x && opp.y > p.y) || (p.dir === 'LEFT' && opp.y === p.y && opp.x < p.x) || (p.dir === 'RIGHT' && opp.y === p.y && opp.x > p.x);
           if (hit) { const { nx, ny } = getNextPos(opp.x, opp.y, p.dir, 1); opp.x = nx; opp.y = ny; opp.stun = true; }
         } else if (card.id === 'HACK') {
-          setVisualEffect({ type: 'hack', x: p.x, y: p.y, color: p.colorClass.replace('text-', 'bg-') });
+          setVisualEffect({ type: 'hack', x: p.x, y: p.y, color: p.colorClass?.replace('text-', 'bg-') || 'bg-orange-500' });
           setTimeout(() => setVisualEffect(null), 400);
           if (Math.abs(p.x - opp.x) + Math.abs(p.y - opp.y) <= 1) { opp.dir = DIRECTIONS[(DIRECTIONS.indexOf(opp.dir) + 2) % 4]; opp.stun = true; }
         }
@@ -368,15 +313,15 @@ const App = () => {
         nextStep[1].x = nx; nextStep[1].y = ny;
       }
       cp = nextStep; setPlayers(cp);
-      if ((cp[0].x === 6 && cp[0].y === 6) || (cp[1].x === 0 && cp[1].y === 0)) break;
+      if ((cp[0]?.x === 6 && cp[0]?.y === 6) || (cp[1]?.x === 0 && cp[1]?.y === 0)) break;
     }
     setExecutionStep(-1);
     handleRoundEnd(cp);
   }
 
-  const submitProgram = async () => {
+  async function submitProgram() {
     if (mode === 'LOCAL') {
-      if (turn === 1) { setTurn(2); setMessage(`${players[1].name}のターン！`); }
+      if (turn === 1) { setTurn(2); setMessage(`${players[1]?.name || "Player 2"}のターン！`); }
       else { setGameState('EXECUTION'); runExecutionLocal(players, programs); }
     } else {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
@@ -391,7 +336,57 @@ const App = () => {
         setMessage("保存に失敗しました。設定を見直してください。"); 
       }
     }
-  };
+  }
+
+  // --- Auth Initialize Effect ---
+  useEffect(() => {
+    async function performAuth() {
+      try {
+        let signedIn = false;
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+            signedIn = true;
+          } catch (e) {}
+        }
+        if (!signedIn) {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth failed:", err);
+      } finally {
+        setIsAuthLoading(false);
+      }
+    }
+    performAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // --- Online Sync Effect ---
+  useEffect(() => {
+    if (!user || mode !== 'ONLINE' || !roomId) return;
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+    const unsubscribe = onSnapshot(roomRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (data.players) setPlayers(data.players);
+      if (data.gameState) setGameState(data.gameState);
+      if (data.round) setRound(data.round);
+      if (data.winner !== undefined) setWinner(data.winner);
+      if (data.hands) setHands(data.hands);
+      if (data.programs) setPrograms(data.programs);
+      if (data.message) setMessage(data.message);
+
+      if (data.gameState === 'EXECUTION' && executionStep === -1) {
+        runExecutionLocal(data.players, data.programs);
+      }
+    }, (err) => {
+      setMessage("通信エラーが発生しました。");
+      console.error("Firestore sync error:", err);
+    });
+    return () => unsubscribe();
+  }, [user, mode, roomId]);
 
   // --- Conditional Rendering ---
   const renderMainUI = () => {
@@ -458,7 +453,7 @@ const App = () => {
           <div className={`p-6 rounded-[2rem] border-4 shadow-lg bg-white ${turn === 1 ? 'border-blue-100' : 'border-red-100'}`}>
             <h3 className="text-sm font-black mb-4 flex items-center gap-2 uppercase text-slate-400"><Play size={16} /> Program Slots</h3>
             <div className="space-y-2">
-              {programs[turn].map((slot, i) => (
+              {programs[turn]?.map((slot, i) => (
                 <div key={i} onClick={() => removeFromProgram(i)} className={`h-14 rounded-2xl border-2 flex items-center px-4 cursor-pointer transition-all ${slot ? `${slot.color} border-transparent text-white` : 'border-slate-100 bg-slate-50 text-slate-300'} ${executionStep === i ? 'ring-4 ring-yellow-400 scale-105 shadow-lg' : ''}`}>
                   <span className="w-6 font-mono text-xs opacity-50">{i + 1}</span>
                   {slot ? <div className="flex items-center gap-2 font-bold text-sm"><slot.icon size={18} /> {slot.label}</div> : <span className="text-[10px] font-bold uppercase">Empty</span>}
@@ -509,7 +504,7 @@ const App = () => {
         <div className="lg:col-span-3 space-y-4">
           <div className="p-6 rounded-[2rem] border-4 border-slate-100 bg-white shadow-md">
             <h3 className="text-sm font-black mb-4 uppercase text-slate-400 flex items-center gap-2"><Trophy size={16} /> Mission</h3>
-            <div className="space-y-4">{players.map(p => (<div key={p.id} className={`flex items-center gap-3 p-3 rounded-2xl border-2 ${p.id === 1 ? 'border-blue-50 bg-blue-50/50' : 'border-red-50 bg-red-50/50'}`}><CustomPawn size={36} customImage={p.customImage} colorClass={p.colorClass} /><div className="overflow-hidden"><p className="text-xs font-black truncate">{p.name}</p><p className="text-[10px] opacity-60 font-bold uppercase">Target: {p.id === 1 ? '(6, 6)' : '(0, 0)'}</p></div></div>))}</div>
+            <div className="space-y-4">{players.map(p => (<div key={p.id} className={`flex items-center gap-3 p-3 rounded-2xl border-2 ${p.id === 1 ? 'border-blue-50 bg-blue-50/50' : 'border-red-50 bg-red-50/50'}`}><CustomPawn size={36} customImage={p.customImage} colorClass={p.colorClass} /><div className="overflow-hidden"><p className="text-xs font-black truncate">{p?.name || "???"}</p><p className="text-[10px] opacity-60 font-bold uppercase">Target: {p.id === 1 ? '(6, 6)' : '(0, 0)'}</p></div></div>))}</div>
           </div>
           <button onClick={() => confirm("終了しますか？") && initGame()} className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl text-[10px] font-black transition-all border-2 border-slate-200 uppercase tracking-widest">Exit Game</button>
         </div>
@@ -525,13 +520,13 @@ const App = () => {
           {mode === 'ONLINE' && roomId && <span className="bg-indigo-100 text-indigo-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">Room: {roomId} / P{onlineRole}</span>}
         </div>
         <div className="flex gap-4">
-          <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 1 ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
+          <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 1 ? 'border-blue-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
             <p className="text-[10px] font-bold text-blue-500 uppercase">Player 1</p>
-            <p className="font-black text-sm">{players[0].name}</p>
+            <p className="font-black text-sm">{players[0]?.name || "Player 1"}</p>
           </div>
           <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 2 ? 'border-red-500 bg-red-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
             <p className="text-[10px] font-bold text-red-500 uppercase">Player 2</p>
-            <p className="font-black text-sm">{players[1].name}</p>
+            <p className="font-black text-sm">{players[1]?.name || "Player 2"}</p>
           </div>
         </div>
       </header>
@@ -542,8 +537,8 @@ const App = () => {
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white border-[12px] border-blue-100 p-12 rounded-[4rem] max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
             <Trophy size={80} className="mx-auto text-yellow-500 mb-6 animate-bounce" />
-            <h2 className="text-4xl font-black mb-2 leading-tight">{winner === 'DRAW' ? 'ひきわけ！' : `${players[winner-1].name} のしょうり！`}</h2>
-            {winner !== 'DRAW' && <div className="flex justify-center mb-8"><CustomPawn size={100} customImage={players[winner-1].customImage} colorClass={players[winner-1].colorClass} /></div>}
+            <h2 className="text-4xl font-black mb-2 leading-tight">{winner === 'DRAW' ? 'ひきわけ！' : `${players[winner-1]?.name || "???"} のしょうり！`}</h2>
+            {winner !== 'DRAW' && winner && players[winner-1] && <div className="flex justify-center mb-8"><CustomPawn size={100} customImage={players[winner-1].customImage} colorClass={players[winner-1].colorClass} /></div>}
             <button onClick={initGame} className="w-full py-5 bg-blue-600 text-white rounded-full font-black text-xl shadow-xl shadow-blue-500/30 active:scale-95 transition-all">もういちど</button>
           </div>
         </div>
