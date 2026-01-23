@@ -38,7 +38,6 @@ import {
 } from 'firebase/firestore';
 
 // --- Firebase Config ---
-// ここにあなたのConfigを貼り付けてください
 const firebaseConfig = {
   apiKey: "AIzaSyDfRVH-33nzntVjM6KkeNRrc8UCjhwgkts",
   authDomain: "prototype-5742a.firebaseapp.com",
@@ -68,8 +67,8 @@ const CARD_TYPES = {
   JUMP: { id: 'JUMP', label: 'ジャンプ', icon: Target, color: 'bg-teal-500 shadow-teal-500/30', description: '2歩進む' },
 };
 
-// --- ヘルパー: 画像のリサイズ (Firestoreの1MB制限対策) ---
-const resizeImage = (base64Str, maxWidth = 400, maxHeight = 400) => {
+// --- ヘルパー: 画像のリサイズ ---
+async function resizeImage(base64Str, maxWidth = 300, maxHeight = 300) {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -92,10 +91,11 @@ const resizeImage = (base64Str, maxWidth = 400, maxHeight = 400) => {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.7)); // 圧縮率0.7のJPEG
+      resolve(canvas.toDataURL('image/jpeg', 0.6)); 
     };
+    img.onerror = () => resolve(base64Str);
   });
-};
+}
 
 // --- カスタム駒コンポーネント ---
 const CustomPawn = ({ size = 48, customImage, colorClass, isMissing }) => {
@@ -104,24 +104,25 @@ const CustomPawn = ({ size = 48, customImage, colorClass, isMissing }) => {
     return (
       <div 
         style={{ width: size, height: size, backgroundImage: `url(${customImage})`, backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: '12px', border: `3px solid ${borderColor}` }}
-        className="shadow-md"
+        className="shadow-md transition-all duration-500"
       />
     );
   }
   return (
-    <div style={{ width: size, height: size, border: `3px dashed ${isMissing ? '#ef4444' : '#cbd5e1'}` }} className={`rounded-xl flex items-center justify-center ${isMissing ? 'bg-red-50' : 'bg-slate-50'}`}>
+    <div style={{ width: size, height: size, border: `3px dashed ${isMissing ? '#ef4444' : '#cbd5e1'}` }} className={`rounded-xl flex items-center justify-center ${isMissing ? 'bg-red-50' : 'bg-slate-50'} transition-colors`}>
       <User size={size * 0.5} className={isMissing ? 'text-red-300' : 'text-slate-300'} />
     </div>
   );
 };
 
 const App = () => {
+  // --- States ---
   const [mode, setMode] = useState(null);
   const [gameState, setGameState] = useState('START');
   const [user, setUser] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [roomId, setRoomId] = useState(null);
-  const [onlineRole, setOnlineRole] = useState(null); // 1 or 2
+  const [onlineRole, setOnlineRole] = useState(null); 
   const [turn, setTurn] = useState(1);
   const [round, setRound] = useState(1);
   const [players, setPlayers] = useState([
@@ -134,20 +135,29 @@ const App = () => {
   const [winner, setWinner] = useState(null);
   const [message, setMessage] = useState("");
   const [visualEffect, setVisualEffect] = useState(null);
-  const [onlineTargetId, setOnlineTargetId] = useState("lobby-1"); // 部屋分け用
+  const [onlineTargetId, setOnlineTargetId] = useState("room-1");
 
   const [tempNames, setTempNames] = useState({ 1: "Player 1", 2: "Player 2" });
   const [customImages, setCustomImages] = useState({ 1: null, 2: null });
   const fileInputRef1 = useRef(null);
   const fileInputRef2 = useRef(null);
 
-  // --- Auth ---
+  // --- Auth Initialize ---
   useEffect(() => {
-    const initAuth = async () => {
+    async function initAuth() {
       try {
+        let signedIn = false;
+        // 環境トークンがある場合は試すが、不一致(mismatch)が発生した場合は匿名認証へフォールバック
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+            signedIn = true;
+          } catch (e) {
+            // Token mismatch error, ignore and move to anonymous
+          }
+        }
+        
+        if (!signedIn) {
           await signInAnonymously(auth);
         }
       } catch (err) {
@@ -155,19 +165,20 @@ const App = () => {
       } finally {
         setIsAuthLoading(false);
       }
-    };
+    }
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
-  // --- Online Sync ---
+  // --- Online Sync Effect ---
   useEffect(() => {
     if (!user || mode !== 'ONLINE' || !roomId) return;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
     const unsubscribe = onSnapshot(roomRef, (snapshot) => {
       if (!snapshot.exists()) return;
       const data = snapshot.data();
+      
       setPlayers(data.players);
       setGameState(data.gameState);
       setRound(data.round);
@@ -175,15 +186,31 @@ const App = () => {
       setHands(data.hands || { 1: [], 2: [] });
       setPrograms(data.programs || { 1: Array(5).fill(null), 2: Array(5).fill(null) });
       setMessage(data.message);
+
       if (data.gameState === 'EXECUTION' && executionStep === -1) {
         runExecutionLocal(data.players, data.programs);
       }
     }, (err) => {
-      setMessage("通信エラー: ルール設定を確認してください");
-      console.error(err);
+      setMessage("通信エラーが発生しました。設定を確認してください。");
+      console.error("Firestore sync error:", err);
     });
     return () => unsubscribe();
   }, [user, mode, roomId]);
+
+  // --- Game Internal Logic ---
+  const initGame = () => {
+    setGameState('START');
+    setMode(null);
+    setRoomId(null);
+    setOnlineRole(null);
+    setTurn(1);
+    setRound(1);
+    setWinner(null);
+    setMessage("");
+    setVisualEffect(null);
+    setExecutionStep(-1);
+    setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) });
+  };
 
   const handleImageUpload = async (e, playerNum) => {
     const file = e.target.files[0];
@@ -195,6 +222,14 @@ const App = () => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const generateHands = () => {
+    const pick = () => Array.from({ length: INITIAL_HAND_SIZE }, () => {
+      const keys = Object.keys(CARD_TYPES);
+      return CARD_TYPES[keys[Math.floor(Math.random() * keys.length)]];
+    });
+    return { 1: pick(), 2: pick() };
   };
 
   const startLocalGame = () => {
@@ -214,41 +249,40 @@ const App = () => {
     if (!user || !customImages[1]) return;
     setGameState('LOBBY');
     setMessage("対戦相手を探しています...");
-    const rid = onlineTargetId || "main-lobby";
+    setMode('ONLINE');
+    
+    const rid = onlineTargetId || "room-1";
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', rid);
+    
     try {
       const snap = await getDoc(roomRef);
-      if (!snap.exists() || snap.data().status === 'playing' || snap.data().round > 1) {
+      if (!snap.exists() || snap.data().status === 'playing' || snap.data().gameState === 'RESULT') {
         const initialData = {
           roomId: rid, status: 'waiting', gameState: 'LOBBY', round: 1, winner: null,
           players: [{ id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, name: tempNames[1], customImage: customImages[1], uid: user.uid, colorClass: "text-blue-500", bgColor: "bg-blue-50" }],
+          programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) },
           message: "対戦相手を待っています..."
         };
         await setDoc(roomRef, initialData);
         setOnlineRole(1); setTurn(1);
       } else {
         const data = snap.data();
-        if (data.players[0].uid === user.uid) { setOnlineRole(1); setTurn(1); setRoomId(rid); return; }
+        if (data.players[0].uid === user.uid) { 
+          setOnlineRole(1); setTurn(1); setRoomId(rid); setGameState(data.gameState);
+          return; 
+        }
         const updatedPlayers = [...data.players, { id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, name: tempNames[1], customImage: customImages[1], uid: user.uid, colorClass: "text-red-500", bgColor: "bg-red-50" }];
         await updateDoc(roomRef, {
           players: updatedPlayers, status: 'playing', gameState: 'PLANNING', hands: generateHands(),
-          programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) }, message: "バトルスタート！P1の入力を待っています"
+          message: "バトルスタート！P1の入力を待っています"
         });
         setOnlineRole(2); setTurn(2);
       }
       setRoomId(rid);
     } catch (err) {
-      setMessage("エラー: セキュリティルールまたは匿名認証を確認してください");
-      console.error(err);
+      setMessage("エラー: 設定を確認してください");
+      console.error("Firestore join error:", err);
     }
-  };
-
-  const generateHands = () => {
-    const pick = () => Array.from({ length: INITIAL_HAND_SIZE }, () => {
-      const keys = Object.keys(CARD_TYPES);
-      return CARD_TYPES[keys[Math.floor(Math.random() * keys.length)]];
-    });
-    return { 1: pick(), 2: pick() };
   };
 
   const addToProgram = (card, index) => {
@@ -280,23 +314,29 @@ const App = () => {
     setHands(newHands);
   };
 
-  const submitProgram = async () => {
-    if (mode === 'LOCAL') {
-      if (turn === 1) { setTurn(2); setMessage(`${players[1].name}のターン！`); }
-      else { setGameState('EXECUTION'); runExecutionLocal(players, programs); }
-    } else {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
-      try {
-        if (onlineRole === 1) {
-          await updateDoc(roomRef, { "programs.1": programs[1], message: "P2の入力を待っています" });
-        } else {
-          await updateDoc(roomRef, { "programs.2": programs[2], gameState: 'EXECUTION', message: "プログラム実行中..." });
-        }
-      } catch (err) { console.error(err); setMessage("保存に失敗しました"); }
-    }
+  const getNextPos = (x, y, dir, steps = 1) => {
+    let nx = x, ny = y;
+    if (dir === 'UP') ny -= steps; if (dir === 'DOWN') ny += steps; if (dir === 'LEFT') nx -= steps; if (dir === 'RIGHT') nx += steps;
+    return { nx: Math.max(0, Math.min(GRID_SIZE - 1, nx)), ny: Math.max(0, Math.min(GRID_SIZE - 1, ny)) };
   };
 
-  const runExecutionLocal = async (currentPlayers, currentPrograms) => {
+  async function handleRoundEnd(finalPlayers) {
+    const p1W = finalPlayers[0].x === 6 && finalPlayers[0].y === 6;
+    const p2W = finalPlayers[1].x === 0 && finalPlayers[1].y === 0;
+    let localWinner = p1W && p2W ? 'DRAW' : p1W ? 1 : p2W ? 2 : null;
+    if (mode === 'LOCAL') {
+      if (localWinner) { setWinner(localWinner); setGameState('RESULT'); }
+      else { setRound(r => r + 1); setTurn(1); setGameState('PLANNING'); setHands(generateHands()); setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) }); setMessage(`${players[0].name}のターン！`); }
+    } else if (onlineRole === 1) {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+      try {
+        if (localWinner) { await updateDoc(roomRef, { players: finalPlayers, winner: localWinner, gameState: 'RESULT', message: "試合終了！" }); }
+        else { await updateDoc(roomRef, { players: finalPlayers, round: round + 1, gameState: 'PLANNING', hands: generateHands(), "programs.1": Array(5).fill(null), "programs.2": Array(5).fill(null), message: "ラウンド継続！P1のターン" }); }
+      } catch (err) { console.error("Online round end sync error:", err); }
+    }
+  }
+
+  async function runExecutionLocal(currentPlayers, currentPrograms) {
     let cp = JSON.parse(JSON.stringify(currentPlayers));
     for (let i = 0; i < 5; i++) {
       setExecutionStep(i);
@@ -332,40 +372,37 @@ const App = () => {
     }
     setExecutionStep(-1);
     handleRoundEnd(cp);
-  };
+  }
 
-  const getNextPos = (x, y, dir, steps = 1) => {
-    let nx = x, ny = y;
-    if (dir === 'UP') ny -= steps; if (dir === 'DOWN') ny += steps; if (dir === 'LEFT') nx -= steps; if (dir === 'RIGHT') nx += steps;
-    return { nx: Math.max(0, Math.min(GRID_SIZE - 1, nx)), ny: Math.max(0, Math.min(GRID_SIZE - 1, ny)) };
-  };
-
-  const handleRoundEnd = async (finalPlayers) => {
-    const p1W = finalPlayers[0].x === 6 && finalPlayers[0].y === 6;
-    const p2W = finalPlayers[1].x === 0 && finalPlayers[1].y === 0;
-    let localWinner = p1W && p2W ? 'DRAW' : p1W ? 1 : p2W ? 2 : null;
+  const submitProgram = async () => {
     if (mode === 'LOCAL') {
-      if (localWinner) { setWinner(localWinner); setGameState('RESULT'); }
-      else { setRound(r => r + 1); setTurn(1); setGameState('PLANNING'); setHands(generateHands()); setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) }); setMessage(`${players[0].name}のターン！`); }
-    } else if (onlineRole === 1) {
+      if (turn === 1) { setTurn(2); setMessage(`${players[1].name}のターン！`); }
+      else { setGameState('EXECUTION'); runExecutionLocal(players, programs); }
+    } else {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
       try {
-        if (localWinner) { await updateDoc(roomRef, { players: finalPlayers, winner: localWinner, gameState: 'RESULT', message: "試合終了！" }); }
-        else { await updateDoc(roomRef, { players: finalPlayers, round: round + 1, gameState: 'PLANNING', hands: generateHands(), "programs.1": Array(5).fill(null), "programs.2": Array(5).fill(null), message: "ラウンド継続！P1のターン" }); }
-      } catch (err) { console.error(err); }
+        if (onlineRole === 1) {
+          await updateDoc(roomRef, { "programs.1": programs[1], message: "P2の入力を待っています" });
+        } else {
+          await updateDoc(roomRef, { "programs.2": programs[2], gameState: 'EXECUTION', message: "プログラム実行中..." });
+        }
+      } catch (err) { 
+        console.error("Online submit error:", err); 
+        setMessage("保存に失敗しました。設定を見直してください。"); 
+      }
     }
   };
 
-  if (gameState === 'START') {
-    const isP1Ready = !!customImages[1]; const isP2Ready = !!customImages[2];
-    return (
-      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 text-slate-800">
-        <h1 className="text-6xl font-black text-blue-600 mb-2">LOGIC DUEL</h1>
+  // --- Conditional Rendering ---
+  const renderMainUI = () => {
+    if (gameState === 'START') {
+      const isP1Ready = !!customImages[1]; const isP2Ready = !!customImages[2];
+      return (
         <div className="bg-white p-10 rounded-[3rem] shadow-2xl border-4 border-blue-100 max-w-5xl w-full">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-            <div className={`p-6 rounded-[2rem] border-2 ${isP1Ready ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-red-100'}`}>
+            <div className={`p-6 rounded-[2rem] border-2 transition-all ${isP1Ready ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-red-100'}`}>
               <label className="text-[10px] font-black text-blue-400 uppercase">Player 1 (You)</label>
-              <input type="text" value={tempNames[1]} onChange={(e) => setTempNames({...tempNames, 1: e.target.value})} className="w-full px-4 py-3 rounded-xl border-2 mb-4 font-bold" />
+              <input type="text" value={tempNames[1]} onChange={(e) => setTempNames({...tempNames, 1: e.target.value})} className="w-full px-4 py-3 rounded-xl border-2 mb-4 font-bold outline-none focus:border-blue-400" />
               <div className="flex flex-col items-center p-4 bg-white rounded-2xl border-2 border-dashed border-blue-200">
                 <CustomPawn size={60} customImage={customImages[1]} colorClass="text-blue-500" isMissing={!isP1Ready} />
                 <input type="file" ref={fileInputRef1} className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 1)} />
@@ -374,10 +411,10 @@ const App = () => {
                 </button>
               </div>
             </div>
-            <div className={`p-6 rounded-[2rem] border-2 ${isP2Ready ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+            <div className={`p-6 rounded-[2rem] border-2 transition-all ${isP2Ready ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
               <label className="text-[10px] font-black text-red-400 uppercase">Player 2 (Local Only)</label>
-              <input type="text" value={tempNames[2]} onChange={(e) => setTempNames({...tempNames, 2: e.target.value})} className="w-full px-4 py-3 rounded-xl border-2 mb-4 font-bold" />
-              <div className="flex flex-col items-center p-4 bg-white rounded-2xl border-2 border-dashed border-red-200">
+              <input type="text" value={tempNames[2]} onChange={(e) => setTempNames({...tempNames, 2: e.target.value})} className="w-full px-4 py-3 rounded-xl border-2 mb-4 font-bold outline-none focus:border-red-400" />
+              <div className="flex flex-col items-center p-4 bg-white rounded-2xl border-2 border-dashed border-slate-200">
                 <CustomPawn size={60} customImage={customImages[2]} colorClass="text-red-500" isMissing={!isP2Ready} />
                 <input type="file" ref={fileInputRef2} className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 2)} />
                 <button onClick={() => fileInputRef2.current.click()} className="mt-3 px-4 py-2 bg-slate-400 text-white rounded-xl text-xs font-bold">画像を選択</button>
@@ -385,14 +422,14 @@ const App = () => {
             </div>
           </div>
           <div className="space-y-4">
-            <div className="flex gap-4">
-              <button disabled={!isP1Ready || !isP2Ready} onClick={startLocalGame} className="flex-1 p-6 bg-blue-600 text-white rounded-[2rem] font-black text-xl hover:bg-blue-700 disabled:bg-slate-200 flex items-center justify-center gap-2 transition-all shadow-lg">
+            <div className="flex flex-col md:flex-row gap-4">
+              <button disabled={!isP1Ready || !isP2Ready} onClick={startLocalGame} className="flex-1 p-6 bg-blue-600 text-white rounded-[2rem] font-black text-xl hover:bg-blue-700 disabled:bg-slate-200 flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95">
                 <Users /> ローカル対戦
               </button>
               <div className="flex-1 flex flex-col gap-2">
                 <div className="flex gap-2">
-                  <input type="text" value={onlineTargetId} onChange={(e) => setOnlineTargetId(e.target.value)} placeholder="部屋IDを入力" className="flex-1 px-4 py-2 rounded-xl border-2 text-sm font-bold" />
-                  <button disabled={!isP1Ready || isAuthLoading} onClick={startOnlineLobby} className="p-4 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 disabled:bg-slate-200 flex items-center justify-center gap-2 transition-all shadow-lg">
+                  <input type="text" value={onlineTargetId} onChange={(e) => setOnlineTargetId(e.target.value)} placeholder="部屋ID" className="flex-1 px-4 py-2 rounded-xl border-2 text-sm font-bold outline-none focus:border-indigo-400" />
+                  <button disabled={!isP1Ready || isAuthLoading} onClick={startOnlineLobby} className="p-4 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 disabled:bg-slate-200 flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95">
                     {isAuthLoading ? <Loader2 className="animate-spin" /> : <Globe />} オンライン
                   </button>
                 </div>
@@ -401,38 +438,21 @@ const App = () => {
             </div>
           </div>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  if (gameState === 'LOBBY') {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+    if (gameState === 'LOBBY') {
+      return (
         <div className="bg-white p-12 rounded-[3rem] shadow-2xl text-center max-w-sm w-full border-4 border-indigo-100">
           <RefreshCw size={40} className="text-indigo-500 animate-spin mx-auto mb-6" />
-          <h2 className="text-2xl font-black mb-2 uppercase text-indigo-600">Matching...</h2>
+          <h2 className="text-2xl font-black mb-2 uppercase text-indigo-600 tracking-tighter">Matching...</h2>
           <p className="text-slate-400 text-sm font-bold mb-8">{message}</p>
-          <button onClick={initGame} className="px-6 py-2 rounded-full border-2 border-slate-200 text-slate-400 text-xs font-bold">キャンセル</button>
+          <button onClick={initGame} className="px-6 py-2 rounded-full border-2 border-slate-200 text-slate-400 text-xs font-bold hover:bg-slate-50 transition-all">キャンセル</button>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 p-4 lg:p-8 font-sans select-none">
-      <header className="max-w-7xl mx-auto flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-black text-blue-600 tracking-tighter">LOGIC DUEL</h1>
-        <div className="flex gap-4">
-          <div className={`px-4 py-2 rounded-2xl border-2 ${turn === 1 ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'}`}>
-            <p className="text-[10px] font-bold text-blue-500 uppercase">Player 1</p>
-            <p className="font-black text-sm">{players[0].name}</p>
-          </div>
-          <div className={`px-4 py-2 rounded-2xl border-2 ${turn === 2 ? 'border-red-500 bg-red-50' : 'border-slate-200 bg-white'}`}>
-            <p className="text-[10px] font-bold text-red-500 uppercase">Player 2</p>
-            <p className="font-black text-sm">{players[1].name}</p>
-          </div>
-        </div>
-      </header>
+    return (
       <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         <div className="lg:col-span-3 space-y-4">
           <div className={`p-6 rounded-[2rem] border-4 shadow-lg bg-white ${turn === 1 ? 'border-blue-100' : 'border-red-100'}`}>
@@ -445,7 +465,7 @@ const App = () => {
                 </div>
               ))}
             </div>
-            <button onClick={submitProgram} disabled={gameState !== 'PLANNING' || (mode === 'ONLINE' && onlineRole !== (message.includes("P1") ? 1 : 2)) || programs[turn].every(s => s === null)} className={`w-full mt-6 py-4 rounded-2xl font-black text-white shadow-lg transition-all ${turn === 1 ? 'bg-blue-600' : 'bg-red-600'} disabled:bg-slate-200`}>
+            <button onClick={submitProgram} disabled={gameState !== 'PLANNING' || (mode === 'ONLINE' && onlineRole !== (message.includes("P1") ? 1 : 2)) || (programs[turn] && programs[turn].every(s => s === null))} className={`w-full mt-6 py-4 rounded-2xl font-black text-white shadow-lg transition-all ${turn === 1 ? 'bg-blue-600' : 'bg-red-600'} disabled:bg-slate-200 active:scale-95`}>
               {turn === 1 && mode === 'LOCAL' ? '交代する' : 'じっこう！'}
             </button>
           </div>
@@ -491,16 +511,40 @@ const App = () => {
             <h3 className="text-sm font-black mb-4 uppercase text-slate-400 flex items-center gap-2"><Trophy size={16} /> Mission</h3>
             <div className="space-y-4">{players.map(p => (<div key={p.id} className={`flex items-center gap-3 p-3 rounded-2xl border-2 ${p.id === 1 ? 'border-blue-50 bg-blue-50/50' : 'border-red-50 bg-red-50/50'}`}><CustomPawn size={36} customImage={p.customImage} colorClass={p.colorClass} /><div className="overflow-hidden"><p className="text-xs font-black truncate">{p.name}</p><p className="text-[10px] opacity-60 font-bold uppercase">Target: {p.id === 1 ? '(6, 6)' : '(0, 0)'}</p></div></div>))}</div>
           </div>
-          <button onClick={() => confirm("終了しますか？") && initGame()} className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl text-[10px] font-black transition-all border-2 border-slate-200 uppercase tracking-[0.2em]">Exit Game</button>
+          <button onClick={() => confirm("終了しますか？") && initGame()} className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl text-[10px] font-black transition-all border-2 border-slate-200 uppercase tracking-widest">Exit Game</button>
         </div>
       </main>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 p-4 lg:p-8 font-sans select-none">
+      <header className="max-w-7xl mx-auto flex justify-between items-center mb-8">
+        <div className="flex items-center gap-4">
+          <h1 className="text-3xl font-black text-blue-600 tracking-tighter">LOGIC DUEL</h1>
+          {mode === 'ONLINE' && roomId && <span className="bg-indigo-100 text-indigo-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">Room: {roomId} / P{onlineRole}</span>}
+        </div>
+        <div className="flex gap-4">
+          <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 1 ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
+            <p className="text-[10px] font-bold text-blue-500 uppercase">Player 1</p>
+            <p className="font-black text-sm">{players[0].name}</p>
+          </div>
+          <div className={`px-4 py-2 rounded-2xl border-2 transition-all ${turn === 2 ? 'border-red-500 bg-red-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
+            <p className="text-[10px] font-bold text-red-500 uppercase">Player 2</p>
+            <p className="font-black text-sm">{players[1].name}</p>
+          </div>
+        </div>
+      </header>
+      
+      {renderMainUI()}
+
       {gameState === 'RESULT' && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white border-[12px] border-blue-100 p-12 rounded-[4rem] max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
             <Trophy size={80} className="mx-auto text-yellow-500 mb-6 animate-bounce" />
             <h2 className="text-4xl font-black mb-2 leading-tight">{winner === 'DRAW' ? 'ひきわけ！' : `${players[winner-1].name} のしょうり！`}</h2>
             {winner !== 'DRAW' && <div className="flex justify-center mb-8"><CustomPawn size={100} customImage={players[winner-1].customImage} colorClass={players[winner-1].colorClass} /></div>}
-            <button onClick={initGame} className="w-full py-5 bg-blue-600 text-white rounded-full font-black text-xl shadow-xl shadow-blue-500/30">もういちど</button>
+            <button onClick={initGame} className="w-full py-5 bg-blue-600 text-white rounded-full font-black text-xl shadow-xl shadow-blue-500/30 active:scale-95 transition-all">もういちど</button>
           </div>
         </div>
       )}
