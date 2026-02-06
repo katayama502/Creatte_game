@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Play, 
-  RotateCw, 
-  ArrowUp, 
-  Trophy, 
+import {
+  Play,
+  RotateCw,
+  ArrowUp,
+  Trophy,
   RefreshCw,
   Info,
   Shield,
@@ -22,37 +22,11 @@ import {
   ChevronRight
 } from 'lucide-react';
 
-// --- Firebase Imports ---
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithCustomToken, 
-  onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  onSnapshot, 
-  updateDoc
-} from 'firebase/firestore';
+// --- Socket.io Imports ---
+import { io } from 'socket.io-client';
 
-// --- Firebase Config ---
-const firebaseConfig = {
-  apiKey: "AIzaSyDfRVH-33nzntVjM6KkeNRrc8UCjhwgkts",
-  authDomain: "prototype-5742a.firebaseapp.com",
-  projectId: "prototype-5742a",
-  storageBucket: "prototype-5742a.firebasestorage.app",
-  messagingSenderId: "627082782302",
-  appId: "1:627082782302:web:2781dd2fb141b0bff3f6cf",
-  measurementId: "G-4SW7CH20KK"
-};
+const socket = io('http://localhost:3001'); // サーバーのURLに合わせて変更してください
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'logic-duel-multi';
 
 // --- 定数 ---
@@ -93,18 +67,35 @@ async function resizeImage(base64Str, maxWidth = 300, maxHeight = 300) {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.5)); 
+      resolve(canvas.toDataURL('image/jpeg', 0.5));
     };
     img.onerror = () => resolve(base64Str);
   });
 }
+
+// --- ヘルパー: カードデータの復元 (Hydration) ---
+// サーバーからは { id: 'MOVE' } のようにIDだけ来るので、完全なオブジェクトに戻す
+const hydrateCards = (cardList) => {
+  if (!cardList) return [];
+  return cardList.map(c => {
+    if (!c || !c.id) return null;
+    return CARD_TYPES[c.id] || c;
+  });
+};
+
+const hydratePrograms = (progMap) => {
+  const newProgs = { 1: [], 2: [] };
+  if (progMap[1]) newProgs[1] = progMap[1].map(c => c ? (CARD_TYPES[c.id] || c) : null);
+  if (progMap[2]) newProgs[2] = progMap[2].map(c => c ? (CARD_TYPES[c.id] || c) : null);
+  return newProgs;
+};
 
 // --- カスタム駒コンポーネント ---
 const CustomPawn = ({ size = 48, customImage, colorClass, isMissing }) => {
   const borderColor = colorClass?.includes('text-blue') ? '#60a5fa' : colorClass?.includes('text-red') ? '#f87171' : '#94a3b8';
   if (customImage) {
     return (
-      <div 
+      <div
         style={{ width: size, height: size, backgroundImage: `url(${customImage})`, backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: '16px', border: `4px solid ${borderColor}` }}
         className="shadow-lg transition-all duration-500 transform hover:scale-110 active:scale-95"
       />
@@ -121,10 +112,10 @@ const App = () => {
   // --- States ---
   const [mode, setMode] = useState(null);
   const [gameState, setGameState] = useState('START');
-  const [user, setUser] = useState(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  // const [user, setUser] = useState(null); // Auth removed
+  const [isAuthLoading, setIsAuthLoading] = useState(false); // No Auth loading
   const [roomId, setRoomId] = useState(null);
-  const [onlineRole, setOnlineRole] = useState(null); 
+  const [onlineRole, setOnlineRole] = useState(null);
   const [turn, setTurn] = useState(1);
   const [round, setRound] = useState(1);
   const [players, setPlayers] = useState([]);
@@ -200,75 +191,23 @@ const App = () => {
   }
 
   async function startOnlineLobby() {
-    if (!user || !customImages[1]) return;
+    if (!customImages[1]) return;
     setGameState('LOBBY');
     setLobbyTimeLeft(180);
     setMessage("通信をじゅんびしています...");
     setMode('ONLINE');
-    
+
     const rid = onlineTargetId || "room-1";
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', rid);
-    
-    try {
-      const snap = await getDoc(roomRef);
-      const data = snap.exists() ? snap.data() : null;
-      
-      // ルームが空か、終了している場合 -> ホスト(P1)として作成
-      if (!data || data.status === 'closed' || data.gameState === 'RESULT' || (data.status === 'waiting' && Date.now() - (data.createdAt || 0) > 3600000)) {
-        const initialData = {
-          roomId: rid, 
-          status: 'waiting', 
-          gameState: 'LOBBY', 
-          round: 1, 
-          winner: null,
-          createdAt: Date.now(),
-          players: [{ 
-            id: 1, x: 0, y: 0, dir: 'RIGHT', stun: false, 
-            name: tempNames[1], customImage: customImages[1], 
-            uid: user.uid, colorClass: "text-blue-500", bgColor: "bg-blue-50" 
-          }],
-          programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) },
-          message: "対戦相手をまっています..."
-        };
-        await setDoc(roomRef, initialData);
-        setOnlineRole(1); setTurn(1);
-      } 
-      // 誰かが待っている場合 -> ゲスト(P2)として参加
-      else if (data.status === 'waiting') {
-        if (data.players?.[0]?.uid === user.uid) { 
-          setOnlineRole(1); setTurn(1); setRoomId(rid); setGameState('LOBBY');
-          return; 
-        }
-        
-        const newP2 = { 
-          id: 2, x: 6, y: 6, dir: 'LEFT', stun: false, 
-          name: tempNames[1], customImage: customImages[1], 
-          uid: user.uid, colorClass: "text-red-500", bgColor: "bg-red-50" 
-        };
-        
-        const updatedPlayers = [data.players[0], newP2];
-        
-        // P2が参加した瞬間にバトル開始(PLANNING)へ移行
-        await updateDoc(roomRef, {
-          players: updatedPlayers, 
-          status: 'playing', 
-          gameState: 'PLANNING', 
-          hands: generateHands(),
-          message: `${data.players[0].name} の入力を待っています`
-        });
-        setOnlineRole(2); setTurn(2);
-      } else {
-        // すでに満員の場合
-        setMessage("この部屋は満員です。別のIDをためしてください。");
-        setTimeout(() => initGame(), 3000);
-        return;
-      }
-      setRoomId(rid);
-    } catch (err) {
-      setMessage("接続に失敗しました。");
-      console.error("Firestore join error:", err);
-      setTimeout(() => initGame(), 2000);
-    }
+    setRoomId(rid);
+
+    // Socket Join
+    socket.emit('join_room', {
+      roomId: rid,
+      playerInfo: {
+        customImage: customImages[1]
+      },
+      tempName: tempNames[1]
+    });
   }
 
   function addToProgram(card, index) {
@@ -312,15 +251,38 @@ const App = () => {
     const p1W = finalPlayers[0]?.x === 6 && finalPlayers[0]?.y === 6;
     const p2W = finalPlayers[1]?.x === 0 && finalPlayers[1]?.y === 0;
     let localWinner = p1W && p2W ? 'DRAW' : p1W ? 1 : p2W ? 2 : null;
-    
+
     if (mode === 'LOCAL') {
       if (localWinner) { setWinner(localWinner); setGameState('RESULT'); }
       else { setRound(r => r + 1); setTurn(1); setGameState('PLANNING'); setHands(generateHands()); setPrograms({ 1: Array(5).fill(null), 2: Array(5).fill(null) }); setMessage(`${players[0]?.name || "Player 1"}のターン！`); }
     } else if (onlineRole === 1) {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+      // Host logic to update round
       try {
-        if (localWinner) { await updateDoc(roomRef, { players: finalPlayers, winner: localWinner, gameState: 'RESULT', message: "試合終了！" }); }
-        else { await updateDoc(roomRef, { players: finalPlayers, round: round + 1, gameState: 'PLANNING', hands: generateHands(), "programs.1": Array(5).fill(null), "programs.2": Array(5).fill(null), message: `ラウンド ${round + 1}：${finalPlayers[0].name} のターン` }); }
+        if (localWinner) {
+          socket.emit('update_state', { roomId, updates: { players: finalPlayers, winner: localWinner, gameState: 'RESULT', message: "試合終了！" } });
+        }
+        else {
+          // Generate new hands for next round (Host Logic)
+          // We map generated cards to IDs immediately for sending
+          const nextHands = generateHands();
+          const serializedHands = {
+            1: nextHands[1].map(c => ({ id: c.id })),
+            2: nextHands[2].map(c => ({ id: c.id }))
+          };
+
+          socket.emit('update_state', {
+            roomId, updates: {
+              players: finalPlayers,
+              round: round + 1,
+              gameState: 'PLANNING',
+              hands: serializedHands,
+              "programs.1": Array(5).fill(null), // Note: server must handle dot notation or we send full object
+              "programs.2": Array(5).fill(null),
+              programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) }, // Sending full object is safer for simple server
+              message: `ラウンド ${round + 1}：${finalPlayers[0].name} のターン`
+            }
+          });
+        }
       } catch (err) { console.error("Online round sync error:", err); }
     }
   }
@@ -353,7 +315,7 @@ const App = () => {
         }
       }
       if (nextStep[0].x === nextStep[1].x && nextStep[0].y === nextStep[1].y) {
-        const {nx, ny} = getNextPos(nextStep[1].x, nextStep[1].y, 'DOWN', 1);
+        const { nx, ny } = getNextPos(nextStep[1].x, nextStep[1].y, 'DOWN', 1);
         nextStep[1].x = nx; nextStep[1].y = ny;
       }
       cp = nextStep; setPlayers(cp);
@@ -368,73 +330,101 @@ const App = () => {
       if (turn === 1) { setTurn(2); setMessage(`${players[1]?.name || "Player 2"}のターン！`); }
       else { setGameState('EXECUTION'); runExecutionLocal(players, programs); }
     } else {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+
       try {
+        const updates = {};
         if (onlineRole === 1) {
-          await updateDoc(roomRef, { "programs.1": programs[1], message: `${players[1].name} の入力を待っています` });
+          // Serialize programs just in case (though we store objects, let's send IDs)
+          const p1 = programs[1].map(c => c ? { id: c.id } : null);
+          // We need to merge with existing programs on server? 
+          // Server simple merge might overwrite entire programs object if we are not careful.
+          // Let's rely on server merging top level keys. We need to send `programs` object with preserved other player's data?
+          // No, `programs` is shared state. If I send `programs: { ...programs, 1: p1 }` it might overwrite P2's update if concurrent.
+          // Ideally server supports partial update or we just send what we have.
+          // Since `submitProgram` happens sequentially usually or we hope so.
+          // Let's try sending full programs state but ONLY modifying our part.
+          // But we don't have P2's latest program if we are not careful? 
+          // We do have it from `rooms` sync.
+          // So:
+          const newProgs = { ...programs, 1: p1 };
+          updates.programs = newProgs;
+          updates.message = `${players[1].name} の入力を待っています`;
         } else {
-          await updateDoc(roomRef, { "programs.2": programs[2], gameState: 'EXECUTION', message: "プログラムを実行中..." });
+          const p2 = programs[2].map(c => c ? { id: c.id } : null);
+          const newProgs = { ...programs, 2: p2 };
+          updates.programs = newProgs;
+          updates.gameState = 'EXECUTION';
+          updates.message = "プログラムを実行中...";
         }
-      } catch (err) { 
-        console.error("Online submit error:", err); 
-        setMessage("保存に失敗しました。画像サイズを小さくしてください。"); 
+        socket.emit('update_state', { roomId, updates });
+      } catch (err) {
+        console.error("Online submit error:", err);
+        setMessage("保存に失敗しました。画像サイズを小さくしてください。");
       }
     }
   }
 
   // --- Effects ---
-  useEffect(() => {
-    async function performAuth() {
-      try {
-        let signedInUser = null;
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          try {
-            const credential = await signInWithCustomToken(auth, __initial_auth_token);
-            signedInUser = credential.user;
-          } catch (e) {}
-        }
-        if (!signedInUser) {
-          const credential = await signInAnonymously(auth);
-          signedInUser = credential.user;
-        }
-        setUser(signedInUser);
-      } catch (err) {
-        console.error("Auth failed:", err);
-      } finally {
-        setIsAuthLoading(false);
-      }
-    }
-    performAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (u) setIsAuthLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+  // Auth Effect Removed
 
   useEffect(() => {
-    if (!user || mode !== 'ONLINE' || !roomId) return;
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
-    const unsubscribe = onSnapshot(roomRef, (snapshot) => {
-      if (!snapshot.exists()) return;
-      const data = snapshot.data();
+    if (mode !== 'ONLINE') return;
+
+    function onRoomJoined({ role, room }) {
+      setOnlineRole(role);
+      setTurn(room.gameState === 'PLANNING' ? 1 : 1); // logic
+      updateLocalState(room);
+    }
+
+    function onRoomUpdated(room) {
+      updateLocalState(room);
+    }
+
+    function onError({ message }) {
+      setMessage("エラー: " + message);
+      setTimeout(initGame, 3000);
+    }
+
+    function updateLocalState(data) {
       if (data.players) setPlayers(data.players);
       if (data.gameState) setGameState(data.gameState);
       if (data.round) setRound(data.round);
       if (data.winner !== undefined) setWinner(data.winner);
-      if (data.hands) setHands(data.hands);
-      if (data.programs) setPrograms(data.programs);
+      if (data.hands) {
+        // Hydrate hands
+        setHands({
+          1: hydrateCards(data.hands[1]),
+          2: hydrateCards(data.hands[2])
+        });
+      }
+      if (data.programs) {
+        setPrograms(hydratePrograms(data.programs));
+      }
       if (data.message) setMessage(data.message);
 
+      // Check execution start
       if (data.gameState === 'EXECUTION' && executionStep === -1) {
-        runExecutionLocal(data.players, data.programs);
+        // Need to wait slightly to ensure state is settled?
+        // render MainUI will use `players` and `programs`.
+        // Trigger execution
+        // Note: `data.players` might be the start position, `data.programs` has cards.
+        // `runExecutionLocal` uses `players` and `programs` args from state if not passed, 
+        // OR we pass `data.players`, `data.programs` (hydrated).
+        // Let's pass the fresh data to be safe.
+        runExecutionLocal(data.players, hydratePrograms(data.programs));
       }
-    }, (err) => {
-      setMessage("通信エラー");
-      console.error(err);
-    });
-    return () => unsubscribe();
-  }, [user, mode, roomId, executionStep]);
+    }
+
+    socket.on('room_joined', onRoomJoined);
+    socket.on('room_updated', onRoomUpdated);
+    socket.on('error', onError);
+
+    return () => {
+      socket.off('room_joined', onRoomJoined);
+      socket.off('room_updated', onRoomUpdated);
+      socket.off('error', onError);
+    };
+  }, [mode, executionStep]); // removed user, roomId from deps as they are stable-ish or checked inside
 
   useEffect(() => {
     let interval;
@@ -460,19 +450,19 @@ const App = () => {
               <div className="inline-block bg-blue-500 text-white text-[10px] font-black tracking-[0.2em] uppercase px-4 py-1.5 rounded-full mb-4 shadow-lg shadow-blue-200">Logic Puzzle Battle</div>
               <h2 className="text-3xl md:text-4xl font-black text-slate-800 tracking-tighter">ヒーローをカスタマイズ！</h2>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-10 mb-12">
               <div className={`p-8 rounded-[3.5rem] border-4 transition-all transform hover:scale-[1.02] ${isP1Ready ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-100 shadow-inner'}`}>
                 <div className="flex justify-between items-center mb-6">
                   <span className="bg-blue-500 text-white text-[10px] font-black px-4 py-1.5 rounded-full shadow-md">Player 1</span>
-                  {!isP1Ready && <span className="text-[10px] font-bold text-rose-500 flex items-center gap-1 animate-pulse"><AlertCircle size={14}/> 画像が必要です</span>}
+                  {!isP1Ready && <span className="text-[10px] font-bold text-rose-500 flex items-center gap-1 animate-pulse"><AlertCircle size={14} /> 画像が必要です</span>}
                 </div>
-                <input type="text" value={tempNames[1]} onChange={(e) => setTempNames({...tempNames, 1: e.target.value})} className="w-full px-6 py-4 rounded-[2rem] border-4 border-white bg-white shadow-md font-black text-slate-700 outline-none focus:border-blue-400 mb-8 text-center transition-all" placeholder="なまえをいれてね" />
+                <input type="text" value={tempNames[1]} onChange={(e) => setTempNames({ ...tempNames, 1: e.target.value })} className="w-full px-6 py-4 rounded-[2rem] border-4 border-white bg-white shadow-md font-black text-slate-700 outline-none focus:border-blue-400 mb-8 text-center transition-all" placeholder="なまえをいれてね" />
                 <div className="flex flex-col items-center">
                   <CustomPawn size={110} customImage={customImages[1]} colorClass="text-blue-500" isMissing={!isP1Ready} />
                   <input type="file" ref={fileInputRef1} className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 1)} />
                   <button onClick={() => fileInputRef1.current.click()} className={`mt-8 px-8 py-4 text-white rounded-[2rem] font-black text-sm transition-all shadow-xl active:scale-95 flex items-center gap-3 ${isP1Ready ? 'bg-blue-500 shadow-blue-200 hover:bg-blue-600' : 'bg-rose-500 shadow-rose-200 animate-bounce'}`}>
-                    {isP1Ready ? <Check size={20}/> : <Upload size={20}/>} {isP1Ready ? '変更する' : '画像をアップ'}
+                    {isP1Ready ? <Check size={20} /> : <Upload size={20} />} {isP1Ready ? '変更する' : '画像をアップ'}
                   </button>
                 </div>
               </div>
@@ -481,12 +471,12 @@ const App = () => {
                 <div className="flex justify-between items-center mb-6">
                   <span className="bg-rose-500 text-white text-[10px] font-black px-4 py-1.5 rounded-full shadow-md">Player 2</span>
                 </div>
-                <input type="text" value={tempNames[2]} onChange={(e) => setTempNames({...tempNames, 2: e.target.value})} className="w-full px-6 py-4 rounded-[2rem] border-4 border-white bg-white shadow-md font-black text-slate-700 outline-none focus:border-rose-400 mb-8 text-center transition-all" placeholder="なまえをいれてね" />
+                <input type="text" value={tempNames[2]} onChange={(e) => setTempNames({ ...tempNames, 2: e.target.value })} className="w-full px-6 py-4 rounded-[2rem] border-4 border-white bg-white shadow-md font-black text-slate-700 outline-none focus:border-rose-400 mb-8 text-center transition-all" placeholder="なまえをいれてね" />
                 <div className="flex flex-col items-center">
                   <CustomPawn size={110} customImage={customImages[2]} colorClass="text-red-500" isMissing={!isP2Ready} />
                   <input type="file" ref={fileInputRef2} className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 2)} />
                   <button onClick={() => fileInputRef2.current.click()} className="mt-8 px-8 py-4 bg-slate-200 text-slate-500 rounded-[2rem] font-black text-sm hover:bg-slate-300 transition-all shadow-xl active:scale-95 flex items-center gap-3">
-                    <Upload size={20}/> 画像をアップ
+                    <Upload size={20} /> 画像をアップ
                   </button>
                 </div>
               </div>
@@ -529,8 +519,8 @@ const App = () => {
               {minutes}:{seconds.toString().padStart(2, '0')}
             </div>
             <div className="p-6 bg-slate-50 rounded-[2.5rem] border-4 border-slate-100 mb-10">
-               <p className="text-slate-400 text-sm font-black mb-1 uppercase tracking-widest">Room ID</p>
-               <p className="text-2xl font-black text-slate-800">{onlineTargetId}</p>
+              <p className="text-slate-400 text-sm font-black mb-1 uppercase tracking-widest">Room ID</p>
+              <p className="text-2xl font-black text-slate-800">{onlineTargetId}</p>
             </div>
             <button onClick={initGame} className="w-full py-5 rounded-[2.5rem] border-4 border-slate-100 text-slate-400 text-sm font-black hover:bg-slate-50 transition-all uppercase tracking-[0.2em] shadow-sm">Cancel</button>
           </div>
@@ -546,7 +536,7 @@ const App = () => {
         {/* 左側：プログラムスロット */}
         <div className="lg:col-span-3 space-y-8">
           <div className={`p-8 rounded-[4rem] border-8 shadow-2xl bg-white transition-all transform hover:-rotate-1 ${isP1 ? 'border-blue-100 shadow-blue-50' : 'border-rose-100 shadow-rose-50'}`}>
-            <h3 className="text-[11px] font-black mb-8 flex items-center gap-3 uppercase tracking-[0.3em] text-slate-400"><Play size={20} className="text-slate-300"/> PROGRAM SLOTS</h3>
+            <h3 className="text-[11px] font-black mb-8 flex items-center gap-3 uppercase tracking-[0.3em] text-slate-400"><Play size={20} className="text-slate-300" /> PROGRAM SLOTS</h3>
             <div className="space-y-4">
               {programs[pKey]?.map((slot, i) => (
                 <div key={i} onClick={() => removeFromProgram(i)} className={`h-20 rounded-[2rem] border-4 flex items-center px-6 cursor-pointer transition-all ${slot ? `${slot.color} border-transparent text-white shadow-lg` : 'border-slate-100 bg-slate-50 text-slate-300 hover:border-slate-200'} ${executionStep === i ? 'ring-8 ring-yellow-300 scale-105 shadow-2xl z-20' : ''}`}>
@@ -556,7 +546,7 @@ const App = () => {
               ))}
             </div>
             <button onClick={submitProgram} disabled={gameState !== 'PLANNING' || (mode === 'ONLINE' && onlineRole !== (message?.includes(players[0]?.name) ? 1 : 2)) || (programs[pKey] && programs[pKey].every(s => s === null))} className={`w-full mt-12 py-6 rounded-[3rem] font-black text-white text-xl shadow-2xl transition-all ${isP1 ? 'bg-gradient-to-r from-blue-500 to-blue-600 shadow-blue-200 hover:scale-105' : 'bg-gradient-to-r from-rose-500 to-rose-600 shadow-rose-200 hover:scale-105'} disabled:opacity-20 disabled:scale-100 disabled:shadow-none active:scale-95 flex items-center justify-center gap-3`}>
-              {turn === 1 && mode === 'LOCAL' ? '交代する' : '実行！'} <ChevronRight strokeWidth={4}/>
+              {turn === 1 && mode === 'LOCAL' ? '交代する' : '実行！'} <ChevronRight strokeWidth={4} />
             </button>
           </div>
           {/* 手札 */}
@@ -567,7 +557,7 @@ const App = () => {
                 <button key={i} onClick={() => addToProgram(card, i)} className={`p-5 rounded-[2.5rem] text-left text-white ${card.color} hover:scale-110 active:scale-90 transition-all shadow-xl group relative overflow-hidden h-28`}>
                   <card.icon size={28} strokeWidth={3} className="mb-3 relative z-10" />
                   <div className="text-[11px] font-black uppercase relative z-10 leading-tight">{card.label}</div>
-                  <div className="absolute -right-4 -bottom-4 opacity-10 group-hover:scale-150 group-hover:rotate-12 transition-all duration-700 transform rotate-12"><card.icon size={80}/></div>
+                  <div className="absolute -right-4 -bottom-4 opacity-10 group-hover:scale-150 group-hover:rotate-12 transition-all duration-700 transform rotate-12"><card.icon size={80} /></div>
                 </button>
               ))}
             </div>
@@ -577,8 +567,8 @@ const App = () => {
         {/* 中央：ボード */}
         <div className="lg:col-span-6 flex flex-col items-center">
           <div className="mb-10 bg-white px-12 py-5 rounded-[3rem] border-b-[10px] border-slate-200 font-black shadow-2xl text-xl text-slate-700 animate-bounce-slow flex items-center gap-4">
-             <div className={`w-4 h-4 rounded-full ${gameState === 'PLANNING' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
-             {message}
+            <div className={`w-4 h-4 rounded-full ${gameState === 'PLANNING' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+            {message}
           </div>
           <div className="bg-white p-6 rounded-[5rem] shadow-2xl border-b-[20px] border-slate-200 relative">
             <div className="grid gap-3 bg-slate-100 p-3 rounded-[4rem]" style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, minmax(0, 1fr))`, width: 'min(90vw, 600px)', height: 'min(90vw, 600px)' }}>
@@ -611,7 +601,7 @@ const App = () => {
         {/* 右側：ミッション情報 */}
         <div className="lg:col-span-3 space-y-8">
           <div className="p-8 rounded-[4rem] border-8 border-slate-100 bg-white shadow-2xl transform hover:rotate-1 transition-all">
-            <h3 className="text-[11px] font-black mb-8 uppercase tracking-[0.3em] text-slate-400 flex items-center gap-3"><Target size={22} className="text-slate-300"/> MISSION</h3>
+            <h3 className="text-[11px] font-black mb-8 uppercase tracking-[0.3em] text-slate-400 flex items-center gap-3"><Target size={22} className="text-slate-300" /> MISSION</h3>
             <div className="space-y-6">
               {players.map(p => (
                 <div key={p?.id} className={`flex items-center gap-5 p-5 rounded-[2.5rem] border-4 ${p?.id === 1 ? 'border-blue-50 bg-blue-50/30' : 'border-rose-50 bg-rose-50/30'} shadow-sm`}>
@@ -648,7 +638,7 @@ const App = () => {
           </div>
         </div>
       </header>
-      
+
       {renderMainUI()}
 
       {gameState === 'RESULT' && (
@@ -657,13 +647,13 @@ const App = () => {
             <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-r from-blue-500 via-purple-500 to-rose-500"></div>
             <Trophy size={140} className="mx-auto text-yellow-400 mb-10 animate-bounce drop-shadow-2xl" />
             <h2 className="text-5xl md:text-6xl font-black mb-6 leading-tight text-slate-900 tracking-tighter">
-              {winner === 'DRAW' ? 'ひきわけ！' : `${players[winner-1]?.name || "???"} のしょうり！`}
+              {winner === 'DRAW' ? 'ひきわけ！' : `${players[winner - 1]?.name || "???"} のしょうり！`}
             </h2>
             <p className="text-slate-400 font-black tracking-widest uppercase mb-12">Congratulations on your logic!</p>
-            {winner !== 'DRAW' && winner && players[winner-1] && (
-               <div className="flex justify-center mb-16 transform scale-150">
-                 <CustomPawn size={110} customImage={players[winner-1].customImage} colorClass={players[winner-1].colorClass} />
-               </div>
+            {winner !== 'DRAW' && winner && players[winner - 1] && (
+              <div className="flex justify-center mb-16 transform scale-150">
+                <CustomPawn size={110} customImage={players[winner - 1].customImage} colorClass={players[winner - 1].colorClass} />
+              </div>
             )}
             <button onClick={initGame} className="w-full py-8 bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white rounded-[3rem] font-black text-3xl shadow-2xl shadow-blue-300 transform hover:scale-105 active:scale-95 transition-all uppercase tracking-tighter">もういちど あそぶ</button>
           </div>
