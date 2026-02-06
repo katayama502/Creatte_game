@@ -274,14 +274,12 @@ const App = () => {
 
           socket.emit('update_state', {
             roomId, updates: {
-              players: finalPlayers,
+              players: finalPlayers.map(({ customImage, ...rest }) => rest), // Send lightweight data
               round: round + 1,
               gameState: 'PLANNING',
               activePlayer: 1, // Reset turn to P1
               hands: serializedHands,
-              "programs.1": Array(5).fill(null), // Note: server must handle dot notation or we send full object
-              "programs.2": Array(5).fill(null),
-              programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) }, // Sending full object is safer for simple server
+              programs: { 1: Array(5).fill(null), 2: Array(5).fill(null) },
               message: `ラウンド ${round + 1}：${finalPlayers[0].name} のターン`
             }
           });
@@ -397,7 +395,14 @@ const App = () => {
     }
 
     function updateLocalState(data) {
-      if (data.players) setPlayers(data.players);
+      if (data.players) {
+        setPlayers(prev => {
+          return data.players.map((nP, i) => {
+            const oldP = prev.find(p => p.id === nP.id) || prev[i];
+            return { ...nP, customImage: nP.customImage || oldP?.customImage };
+          });
+        });
+      }
       if (data.gameState) setGameState(data.gameState);
       if (data.round) setRound(data.round);
       if (data.winner !== undefined) setWinner(data.winner);
