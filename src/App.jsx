@@ -376,12 +376,21 @@ const App = () => {
   // --- Effects ---
   // Auth Effect Removed
 
+  // --- Effects ---
+  // Auth Effect Removed
+
+  // Ref to track execution status to avoid stale closures in socket usage
+  const executionStepRef = useRef(-1);
+  useEffect(() => {
+    executionStepRef.current = executionStep;
+  }, [executionStep]);
+
   useEffect(() => {
     if (mode !== 'ONLINE') return;
 
     function onRoomJoined({ role, room }) {
       setOnlineRole(role);
-      setTurn(room.activePlayer || 1); // logic
+      setTurn(room.activePlayer || 1);
       updateLocalState(room);
     }
 
@@ -419,15 +428,9 @@ const App = () => {
       if (data.message) setMessage(data.message);
       if (data.activePlayer) setTurn(data.activePlayer);
 
-      // Check execution start
-      if (data.gameState === 'EXECUTION' && executionStep === -1) {
-        // Need to wait slightly to ensure state is settled?
-        // render MainUI will use `players` and `programs`.
+      // Check execution start using Ref to avoid dependency on executionStep
+      if (data.gameState === 'EXECUTION' && executionStepRef.current === -1) {
         // Trigger execution
-        // Note: `data.players` might be the start position, `data.programs` has cards.
-        // `runExecutionLocal` uses `players` and `programs` args from state if not passed, 
-        // OR we pass `data.players`, `data.programs` (hydrated).
-        // Let's pass the fresh data to be safe.
         runExecutionLocal(data.players, hydratePrograms(data.programs));
       }
     }
@@ -441,7 +444,7 @@ const App = () => {
       socket.off('room_updated', onRoomUpdated);
       socket.off('error', onError);
     };
-  }, [mode, executionStep]); // removed user, roomId from deps as they are stable-ish or checked inside
+  }, [mode]); // Only re-run if mode changes (or socket instance changes if we tracked it)
 
   useEffect(() => {
     let interval;
