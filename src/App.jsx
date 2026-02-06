@@ -287,7 +287,7 @@ const App = () => {
 
   // New function for the button
   async function forceNextRound() {
-    if (!confirm("強制的に次のラウンドに進みますか？")) return;
+    if (!confirm("実行が完了したらボタンを押して次のターンへ！")) return;
     // Calculate based on current players state (which should be at end of animation)
     // Use `players` state directly.
     const p1W = players[0]?.x === 6 && players[0]?.y === 6;
