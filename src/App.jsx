@@ -25,7 +25,7 @@ import {
 // --- Socket.io Imports ---
 import { io } from 'socket.io-client';
 
-const socket = io('http://localhost:3001'); // サーバーのURLに合わせて変更してください
+const socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'); // 環境変数またはローカル
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'logic-duel-multi';
 
