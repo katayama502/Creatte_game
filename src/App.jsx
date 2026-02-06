@@ -588,7 +588,7 @@ const App = () => {
                 const x = i % GRID_SIZE; const y = Math.floor(i / GRID_SIZE);
                 const isCheckered = (x + y) % 2 === 0;
                 return (
-                  <div key={i} className={`relative rounded-3xl overflow-hidden flex items-center justify-center transition-all ${isCheckered ? 'bg-white' : 'bg-white/40'}`}>
+                  <div key={i} className={`relative rounded-3xl overflow-hidden flex items-center justify-center transition-all aspect-square ${isCheckered ? 'bg-white' : 'bg-white/40'}`}>
                     {visualEffect && visualEffect.type === 'laser' && ((visualEffect.dir === 'UP' && x === visualEffect.x && y < visualEffect.y) || (visualEffect.dir === 'DOWN' && x === visualEffect.x && y > visualEffect.y) || (visualEffect.dir === 'LEFT' && y === visualEffect.y && x < visualEffect.x) || (visualEffect.dir === 'RIGHT' && y === visualEffect.y && x > visualEffect.x)) && <div className={`absolute inset-0 ${visualEffect.color} opacity-70 animate-pulse shadow-[inset_0_0_30px_white]`}></div>}
                     {visualEffect && visualEffect.type === 'hack' && Math.abs(x - visualEffect.x) <= 1 && Math.abs(y - visualEffect.y) <= 1 && <div className={`absolute inset-0 ${visualEffect.color} opacity-50 animate-ping`}></div>}
                     {players.map(p => p.x === x && p.y === y && (
