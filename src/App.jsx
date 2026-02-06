@@ -25,7 +25,9 @@ import {
 // --- Socket.io Imports ---
 import { io } from 'socket.io-client';
 
-const socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'); // 環境変数またはローカル
+// Use the provided Render URL for production, fallback to environment variable or localhost
+const socket = io('https://creatte-game.onrender.com');
+// OR: const socket = io(import.meta.env.VITE_SERVER_URL || 'https://creatte-game.onrender.com');
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'logic-duel-multi';
 
