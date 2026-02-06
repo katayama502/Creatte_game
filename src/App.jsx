@@ -292,40 +292,46 @@ const App = () => {
 
   async function runExecutionLocal(currentPlayers, currentPrograms) {
     let cp = JSON.parse(JSON.stringify(currentPlayers));
-    for (let i = 0; i < 5; i++) {
-      setExecutionStep(i);
-      await new Promise(r => setTimeout(r, 800));
-      let nextStep = JSON.parse(JSON.stringify(cp));
-      for (let pIdx = 0; pIdx < 2; pIdx++) {
-        const pNum = pIdx + 1; const opponentIdx = pIdx === 0 ? 1 : 0;
-        const card = currentPrograms[pNum]?.[i]; if (!card) continue;
-        if (nextStep[pIdx].stun) { nextStep[pIdx].stun = false; continue; }
-        const p = nextStep[pIdx]; const opp = nextStep[opponentIdx];
-        if (card.id === 'MOVE' || card.id === 'JUMP') {
-          const { nx, ny } = getNextPos(p.x, p.y, p.dir, card.id === 'JUMP' ? 2 : 1);
-          p.x = nx; p.y = ny;
-        } else if (card.id === 'TURN_L') { p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 3) % 4]; }
-        else if (card.id === 'TURN_R') { p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 1) % 4]; }
-        else if (card.id === 'LASER') {
-          setVisualEffect({ type: 'laser', x: p.x, y: p.y, dir: p.dir, color: p.colorClass?.replace('text-', 'bg-') || 'bg-rose-400' });
-          setTimeout(() => setVisualEffect(null), 400);
-          let hit = (p.dir === 'UP' && opp.x === p.x && opp.y < p.y) || (p.dir === 'DOWN' && opp.x === p.x && opp.y > p.y) || (p.dir === 'LEFT' && opp.y === p.y && opp.x < p.x) || (p.dir === 'RIGHT' && opp.y === p.y && opp.x > p.x);
-          if (hit) { const { nx, ny } = getNextPos(opp.x, opp.y, p.dir, 1); opp.x = nx; opp.y = ny; opp.stun = true; }
-        } else if (card.id === 'HACK') {
-          setVisualEffect({ type: 'hack', x: p.x, y: p.y, color: p.colorClass?.replace('text-', 'bg-') || 'bg-orange-400' });
-          setTimeout(() => setVisualEffect(null), 400);
-          if (Math.abs(p.x - opp.x) + Math.abs(p.y - opp.y) <= 1) { opp.dir = DIRECTIONS[(DIRECTIONS.indexOf(opp.dir) + 2) % 4]; opp.stun = true; }
+    try {
+      for (let i = 0; i < 5; i++) {
+        setExecutionStep(i);
+        await new Promise(r => setTimeout(r, 800));
+        let nextStep = JSON.parse(JSON.stringify(cp));
+        for (let pIdx = 0; pIdx < 2; pIdx++) {
+          const pNum = pIdx + 1; const opponentIdx = pIdx === 0 ? 1 : 0;
+          const card = currentPrograms[pNum]?.[i]; if (!card) continue;
+          if (nextStep[pIdx].stun) { nextStep[pIdx].stun = false; continue; }
+          const p = nextStep[pIdx]; const opp = nextStep[opponentIdx];
+          if (card.id === 'MOVE' || card.id === 'JUMP') {
+            const { nx, ny } = getNextPos(p.x, p.y, p.dir, card.id === 'JUMP' ? 2 : 1);
+            p.x = nx; p.y = ny;
+          } else if (card.id === 'TURN_L') { p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 3) % 4]; }
+          else if (card.id === 'TURN_R') { p.dir = DIRECTIONS[(DIRECTIONS.indexOf(p.dir) + 1) % 4]; }
+          else if (card.id === 'LASER') {
+            setVisualEffect({ type: 'laser', x: p.x, y: p.y, dir: p.dir, color: p.colorClass?.replace('text-', 'bg-') || 'bg-rose-400' });
+            setTimeout(() => setVisualEffect(null), 400);
+            let hit = (p.dir === 'UP' && opp.x === p.x && opp.y < p.y) || (p.dir === 'DOWN' && opp.x === p.x && opp.y > p.y) || (p.dir === 'LEFT' && opp.y === p.y && opp.x < p.x) || (p.dir === 'RIGHT' && opp.y === p.y && opp.x > p.x);
+            if (hit) { const { nx, ny } = getNextPos(opp.x, opp.y, p.dir, 1); opp.x = nx; opp.y = ny; opp.stun = true; }
+          } else if (card.id === 'HACK') {
+            setVisualEffect({ type: 'hack', x: p.x, y: p.y, color: p.colorClass?.replace('text-', 'bg-') || 'bg-orange-400' });
+            setTimeout(() => setVisualEffect(null), 400);
+            if (Math.abs(p.x - opp.x) + Math.abs(p.y - opp.y) <= 1) { opp.dir = DIRECTIONS[(DIRECTIONS.indexOf(opp.dir) + 2) % 4]; opp.stun = true; }
+          }
         }
+        if (nextStep[0].x === nextStep[1].x && nextStep[0].y === nextStep[1].y) {
+          const { nx, ny } = getNextPos(nextStep[1].x, nextStep[1].y, 'DOWN', 1);
+          nextStep[1].x = nx; nextStep[1].y = ny;
+        }
+        cp = nextStep; setPlayers(cp);
+        if ((cp[0]?.x === 6 && cp[0]?.y === 6) || (cp[1]?.x === 0 && cp[1]?.y === 0)) break;
       }
-      if (nextStep[0].x === nextStep[1].x && nextStep[0].y === nextStep[1].y) {
-        const { nx, ny } = getNextPos(nextStep[1].x, nextStep[1].y, 'DOWN', 1);
-        nextStep[1].x = nx; nextStep[1].y = ny;
-      }
-      cp = nextStep; setPlayers(cp);
-      if ((cp[0]?.x === 6 && cp[0]?.y === 6) || (cp[1]?.x === 0 && cp[1]?.y === 0)) break;
+    } catch (e) {
+      console.error("Execution error", e);
+    } finally {
+      setExecutionStep(-1);
+      // Ensure we use the latest calculated state 'cp' or fallback to a safe state if error
+      handleRoundEnd(cp);
     }
-    setExecutionStep(-1);
-    handleRoundEnd(cp);
   }
 
   async function submitProgram() {
