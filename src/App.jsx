@@ -215,8 +215,8 @@ const App = () => {
   function addToProgram(card, index) {
     if (gameState !== 'PLANNING') return;
     if (mode === 'ONLINE') {
-      const currentWaitingId = message?.includes("P1") ? 1 : 2;
-      if (onlineRole !== currentWaitingId) return;
+      // Use efficient turn state synced from server
+      if (onlineRole !== turn) return;
     }
     const newPrograms = { ...programs };
     const pKey = mode === 'ONLINE' ? onlineRole : turn;
@@ -277,6 +277,7 @@ const App = () => {
               players: finalPlayers,
               round: round + 1,
               gameState: 'PLANNING',
+              activePlayer: 1, // Reset turn to P1
               hands: serializedHands,
               "programs.1": Array(5).fill(null), // Note: server must handle dot notation or we send full object
               "programs.2": Array(5).fill(null),
@@ -350,11 +351,13 @@ const App = () => {
           // So:
           const newProgs = { ...programs, 1: p1 };
           updates.programs = newProgs;
+          updates.activePlayer = 2; // Pass turn to P2
           updates.message = `${players[1].name} の入力を待っています`;
         } else {
           const p2 = programs[2].map(c => c ? { id: c.id } : null);
           const newProgs = { ...programs, 2: p2 };
           updates.programs = newProgs;
+          updates.activePlayer = null; // Execution phase, no active player
           updates.gameState = 'EXECUTION';
           updates.message = "プログラムを実行中...";
         }
@@ -374,7 +377,7 @@ const App = () => {
 
     function onRoomJoined({ role, room }) {
       setOnlineRole(role);
-      setTurn(room.gameState === 'PLANNING' ? 1 : 1); // logic
+      setTurn(room.activePlayer || 1); // logic
       updateLocalState(room);
     }
 
@@ -403,6 +406,7 @@ const App = () => {
         setPrograms(hydratePrograms(data.programs));
       }
       if (data.message) setMessage(data.message);
+      if (data.activePlayer) setTurn(data.activePlayer);
 
       // Check execution start
       if (data.gameState === 'EXECUTION' && executionStep === -1) {
