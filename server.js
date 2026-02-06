@@ -99,6 +99,15 @@ io.on('connection', (socket) => {
   socket.on('update_state', ({ roomId, updates }) => {
     if (!rooms[roomId]) return;
 
+    // Deep merge for 'programs' to prevent overwriting other player's data
+    if (updates.programs) {
+      rooms[roomId].programs = {
+        ...rooms[roomId].programs,
+        ...updates.programs
+      };
+      delete updates.programs; // handled
+    }
+
     // Merge updates
     // Be careful with deep merge manually if needed, but spread is usually ok for top-level keys
     rooms[roomId] = { ...rooms[roomId], ...updates };
